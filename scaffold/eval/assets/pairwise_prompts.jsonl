@@ -1,3 +1,15 @@
 {"id": "p001", "prompt": "Explain why batch-1 LLM decode on a CPU is memory-bandwidth-bound rather than compute-bound, in three sentences."}
 {"id": "p002", "prompt": "A user has an old AVX-less server with lots of RAM. Recommend one concrete strategy to run a capable model quickly on it, and justify it in two sentences."}
 {"id": "p003", "prompt": "Write a short, clear docstring for a function that re-routes an optimizer to a kernel-bound or memory-bound action space based on roofline efficiency."}
+{"id": "p004", "prompt": "A train leaves city A at 9:00 traveling 60 km/h toward city B, 150 km away. A second train leaves B at 9:30 toward A at 90 km/h. At what time do they meet? Show your reasoning briefly."}
+{"id": "p005", "prompt": "Explain the difference between latency and throughput to a smart twelve-year-old, using one everyday analogy."}
+{"id": "p006", "prompt": "Write a Python function that returns the second-largest distinct value in a list, or None if there isn't one. Include a one-line explanation of an edge case you handled."}
+{"id": "p007", "prompt": "Summarize the trade-off between using a smaller model and a larger one on memory-constrained hardware, in no more than four sentences."}
+{"id": "p008", "prompt": "A colleague claims that quantizing a model to fewer bits always makes it run faster on any CPU. Briefly explain one situation where this is false and why."}
+{"id": "p009", "prompt": "Give clear step-by-step instructions for safely diagnosing why a Linux machine has become unresponsive over SSH, assuming you can still open one new SSH session."}
+{"id": "p010", "prompt": "Rewrite this sentence to be clearer and more concise without losing meaning: 'Due to the fact that the system was experiencing a high degree of memory pressure, the decision was made to reduce the size of the model that was being loaded.'"}
+{"id": "p011", "prompt": "What is the capital of Australia, and why do many people incorrectly guess Sydney? Answer in two sentences."}
+{"id": "p012", "prompt": "Design a simple experiment to measure whether a code change actually improved a program's speed, and name two mistakes that would make the measurement untrustworthy."}
+{"id": "p013", "prompt": "Explain what a hash function is and one practical use for it, in plain language, in three sentences."}
+{"id": "p014", "prompt": "A recipe serves 4 and calls for 300 grams of flour and 2 eggs. You need to serve 10. List the adjusted quantities and show the scaling factor you used."}
+{"id": "p015", "prompt": "Argue briefly for the position that recording failed experiments is as valuable as recording successful ones, in three sentences."}

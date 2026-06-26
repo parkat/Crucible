@@ -1,3 +1,24 @@
 {"id": "m001", "prompt": "What is 17 * 23? Give only the number.", "answer": 391}
 {"id": "m002", "prompt": "A draft model proposes 5 tokens per step and 3 are accepted on average. Over 40 steps, how many tokens are produced? Give only the number.", "answer": 200}
 {"id": "m003", "prompt": "If memory bandwidth is 24 GB/s and a model streams 1.5 GB per token, how many tokens per second is the ceiling? Give only the number.", "answer": 16}
+{"id": "m004", "prompt": "What is 144 divided by 12? Give only the number.", "answer": 12}
+{"id": "m005", "prompt": "What is 7 cubed (7 to the power of 3)? Give only the number.", "answer": 343}
+{"id": "m006", "prompt": "What is 15 percent of 240? Give only the number.", "answer": 36}
+{"id": "m007", "prompt": "A model has 3 billion active parameters per token at 0.5 bytes per weight. How many gigabytes are streamed per token? Give only the number.", "answer": 1.5}
+{"id": "m008", "prompt": "What is the sum of all integers from 1 to 100 inclusive? Give only the number.", "answer": 5050}
+{"id": "m009", "prompt": "A box has 8 GB of RAM and a model needs 17 GB to load. How many additional GB are required? Give only the number.", "answer": 9}
+{"id": "m010", "prompt": "A process generates 2.8 tokens per second. How many tokens are produced in 5 minutes? Give only the number.", "answer": 840}
+{"id": "m011", "prompt": "What is 256 multiplied by 4? Give only the number.", "answer": 1024}
+{"id": "m012", "prompt": "A quantization uses 4 bits per weight. How many bytes are needed to store 1024 weights? Give only the number.", "answer": 512}
+{"id": "m013", "prompt": "What is 1000 minus the product of 37 and 17? Give only the number.", "answer": 371}
+{"id": "m014", "prompt": "A draft model proposes 4 tokens per step with an acceptance rate of 0.75. What is the expected number of accepted tokens per step? Give only the number.", "answer": 3}
+{"id": "m015", "prompt": "A train travels 60 kilometers in 45 minutes. What is its speed in kilometers per hour? Give only the number.", "answer": 80}
+{"id": "m016", "prompt": "What is 2 to the power of 10? Give only the number.", "answer": 1024}
+{"id": "m017", "prompt": "How many distinct ways are there to choose 2 items from a set of 5? Give only the number.", "answer": 10}
+{"id": "m018", "prompt": "What is 3.5 plus 4.25? Give only the number.", "answer": 7.75}
+{"id": "m019", "prompt": "A file is 947 MB. Starting from 53000 MB of free disk, how many MB remain after copying the file 9 times? Give only the number.", "answer": 44477}
+{"id": "m020", "prompt": "What is one quarter plus one quarter plus one quarter, as a decimal? Give only the number.", "answer": 0.75}
+{"id": "m021", "prompt": "A model has 24 layers and each layer takes 12 milliseconds. How many milliseconds does one full forward pass take? Give only the number.", "answer": 288}
+{"id": "m022", "prompt": "What is 99 multiplied by 99? Give only the number.", "answer": 9801}
+{"id": "m023", "prompt": "A campaign lasts 72 hours and the wind-down margin is 10 percent of that. How many hours is the wind-down margin? Give only the number.", "answer": 7.2}
+{"id": "m024", "prompt": "What is 64 divided by 2, then divided by 2, then divided by 2 again? Give only the number.", "answer": 8}
