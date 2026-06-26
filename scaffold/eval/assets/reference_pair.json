@@ -1,0 +1,8 @@
+{
+  "id": "ref001",
+  "prompt": "Why does speculative decoding speed up batch-1 CPU inference? One sentence.",
+  "output_a": "Because a small draft model proposes several tokens that the large model verifies in a single forward pass, so the large weights are streamed from memory once per several tokens instead of once per token.",
+  "output_b": "Because it makes the computer think faster and uses the GPU cores more efficiently to predict the future tokens ahead of time in parallel threads.",
+  "expected_winner": "a",
+  "note": "A is mechanistically correct (bandwidth amortization, no GPU assumed). B is hand-wavy and wrong for the CPU/batch-1 setting. Used to detect judge drift."
+}

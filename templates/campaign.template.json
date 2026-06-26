@@ -1,0 +1,14 @@
+{
+  "nickname": "<NICKNAME>",
+  "autonomy_tier": "<T1|T2|T3|T4>",
+  "duration_label": "<1hr|6hr|1day|3day|open>",
+  "start_epoch": 0,
+  "deadline_epoch": null,
+  "winddown_margin_frac": 0.10,
+  "n_measure_runs": 5,
+  "front_stall_K": 8,
+  "roofline_efficiency_threshold": 0.60,
+  "quality_floor_frac_of_fp16": 0.70,
+  "state": "running",
+  "notes": "thresholds here are agent-revisable priors; record revisions in MEMORY.md"
+}

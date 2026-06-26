@@ -1,0 +1,422 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crucible · campaign monitor</title>
+<style>
+  /* ── instrument palette: warm graphite bezel, sodium-phosphor trace, cyan reference ──
+     Deliberately NOT flat-black-with-neon: a bench test-instrument readout. The amber is
+     P-amber CRT phosphor (the "achieved" signal); cyan-teal is the roofline reference
+     trace; oxblood marks failures. Grounded in the salvage-hardware / RF-bench subject. */
+  :root{
+    --bg:#0d1110; --panel:#141a18; --panel-2:#19211e; --well:#0a0e0d;
+    --grid:#1f2b25; --grid-hi:#2c3d35; --hair:#26332d;
+    --ink:#d8dcd4; --ink-dim:#8a938c; --ink-faint:#5b635d;
+    --amber:#e8a33d; --amber-soft:#caa05a;
+    --cyan:#5bc8b5; --oxblood:#b5503c; --violet:#9a86c4;
+    --mono:"SFMono-Regular",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:
+      radial-gradient(120% 80% at 50% -10%, #121a17 0%, var(--bg) 60%) fixed,
+      var(--bg);
+    color:var(--ink); font-family:var(--sans);
+    font-size:14px; line-height:1.45; -webkit-font-smoothing:antialiased;
+    padding:18px; min-height:100%;
+  }
+  .lbl{font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--ink-dim)}
+  .mono{font-family:var(--mono)}
+  .num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+
+  /* ── frame ── */
+  .wrap{max-width:1180px; margin:0 auto; display:flex; flex-direction:column; gap:14px}
+
+  /* ── status strip ── */
+  .strip{
+    display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+    background:linear-gradient(180deg,var(--panel-2),var(--panel));
+    border:1px solid var(--hair); border-radius:3px; padding:12px 16px;
+    box-shadow:inset 0 1px 0 #ffffff0a, 0 1px 2px #0006;
+  }
+  .brand{display:flex; align-items:baseline; gap:10px}
+  .brand b{font-size:16px; letter-spacing:.32em; text-transform:uppercase; font-weight:600; color:var(--ink)}
+  .brand .nick{font-family:var(--mono); color:var(--amber); font-size:13px; letter-spacing:.05em}
+  .chip{
+    font-family:var(--mono); font-size:12px; letter-spacing:.08em;
+    border:1px solid var(--hair); border-radius:2px; padding:4px 9px; color:var(--ink-dim);
+    background:var(--well);
+  }
+  .chip.tier{color:var(--amber); border-color:#4a3a1e}
+  .clock{margin-left:auto; display:flex; align-items:center; gap:10px}
+  .clock .t{font-family:var(--mono); font-size:22px; letter-spacing:.04em; color:var(--ink)}
+  .clock .t.open{color:var(--cyan); font-size:14px; letter-spacing:.18em}
+  .live{display:flex; align-items:center; gap:7px; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-dim)}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--amber); box-shadow:0 0 0 0 #e8a33d80}
+  .dot.beat{animation:beat 2.4s ease-out infinite}
+  @keyframes beat{0%{box-shadow:0 0 0 0 #e8a33d66}70%{box-shadow:0 0 0 7px #e8a33d00}100%{box-shadow:0 0 0 0 #e8a33d00}}
+
+  /* ── main grid ── */
+  .main{display:grid; grid-template-columns:1fr 300px; gap:14px}
+  @media(max-width:880px){.main{grid-template-columns:1fr}}
+  .panel{
+    background:linear-gradient(180deg,var(--panel),var(--panel-2));
+    border:1px solid var(--hair); border-radius:3px; padding:14px 16px;
+    box-shadow:inset 0 1px 0 #ffffff08;
+  }
+  .panel h2{margin:0 0 2px; font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--ink-dim); font-weight:600}
+  .panel .sub{font-family:var(--mono); font-size:11px; color:var(--ink-faint); margin-bottom:8px}
+
+  /* ── plot ── */
+  .plotwell{background:var(--well); border:1px solid var(--grid); border-radius:2px; padding:4px}
+  svg{display:block; width:100%; height:auto}
+  .empty{display:flex; align-items:center; justify-content:center; min-height:300px; text-align:center; color:var(--ink-faint)}
+  .empty .big{font-family:var(--mono); letter-spacing:.16em; color:var(--ink-dim); font-size:13px}
+
+  /* ── meters ── */
+  .meters{display:flex; flex-direction:column; gap:10px}
+  .meter{border:1px solid var(--grid); border-radius:2px; padding:9px 11px; background:var(--well)}
+  .meter .k{font-size:9px; letter-spacing:.18em; text-transform:uppercase; color:var(--ink-faint)}
+  .meter .v{font-family:var(--mono); font-variant-numeric:tabular-nums; font-size:23px; color:var(--amber); line-height:1.1}
+  .meter .v small{font-size:11px; color:var(--ink-dim); letter-spacing:.05em}
+  .meter .cfg{font-family:var(--mono); font-size:10px; color:var(--ink-faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+
+  .gauge{margin-top:2px}
+  .gauge .track{height:9px; background:#0f1614; border:1px solid var(--grid); border-radius:2px; overflow:hidden; position:relative}
+  .gauge .fill{height:100%; background:linear-gradient(90deg,#7a5a26,var(--amber)); width:0%}
+  .gauge .knee{position:absolute; top:-3px; bottom:-3px; width:1px; background:var(--cyan); opacity:.8}
+  .gauge .row{display:flex; justify-content:space-between; font-family:var(--mono); font-size:10px; color:var(--ink-dim); margin-top:5px}
+  .gauge .bound{font-size:10px; letter-spacing:.1em; text-transform:uppercase}
+  .bound.mem{color:var(--cyan)} .bound.ker{color:var(--amber)} .bound.unk{color:var(--ink-faint)}
+
+  /* ── timeline ── */
+  .tl{display:flex; align-items:flex-end; gap:2px; height:46px; padding:2px 0}
+  .tl i{flex:1 1 auto; min-width:2px; border-radius:1px 1px 0 0; opacity:.92}
+  .tl-legend{display:flex; gap:14px; margin-top:8px; flex-wrap:wrap}
+  .tl-legend span{display:flex; align-items:center; gap:6px; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint)}
+  .sw{width:9px; height:9px; border-radius:1px; display:inline-block}
+
+  /* ── bottom: activity + hypotheses ── */
+  .bottom{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  @media(max-width:880px){.bottom{grid-template-columns:1fr}}
+  .kv{display:flex; gap:10px; padding:5px 0; border-bottom:1px solid var(--hair)}
+  .kv:last-child{border-bottom:0}
+  .kv .k{min-width:78px; font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-faint); padding-top:2px}
+  .kv .val{font-family:var(--mono); font-size:12px; color:var(--ink); word-break:break-word}
+  .hyp{counter-reset:h; list-style:none; margin:0; padding:0}
+  .hyp li{position:relative; padding:7px 0 7px 30px; border-bottom:1px solid var(--hair); font-size:13px; color:var(--ink)}
+  .hyp li:last-child{border-bottom:0}
+  .hyp li::before{
+    counter-increment:h; content:counter(h,decimal-leading-zero);
+    position:absolute; left:0; top:7px; font-family:var(--mono); font-size:11px; color:var(--amber); opacity:.8;
+  }
+  .muted{color:var(--ink-faint); font-style:normal; font-family:var(--mono); font-size:11px}
+  footer{display:flex; justify-content:space-between; color:var(--ink-faint); font-family:var(--mono); font-size:10px; letter-spacing:.06em; padding:2px 4px}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+
+<div class="wrap">
+
+  <!-- status strip -->
+  <div class="strip">
+    <div class="brand">
+      <b>Crucible</b>
+      <span class="nick" id="nick">— · —</span>
+    </div>
+    <span class="chip tier" id="tier">TIER —</span>
+    <span class="chip" id="phase-chip">initializing</span>
+    <span class="chip" id="count-chip">0 runs</span>
+    <div class="clock">
+      <div style="text-align:right">
+        <div class="lbl" id="clock-label">time remaining</div>
+        <div class="t" id="clock">--:--:--</div>
+      </div>
+      <div class="live"><span class="dot beat" id="livedot"></span><span id="livetext">live</span></div>
+    </div>
+  </div>
+
+  <!-- main -->
+  <div class="main">
+    <div class="panel">
+      <h2>Pareto frontier</h2>
+      <div class="sub">decode throughput (tok/s) &times; quality (Elo) · ring = blessed · size = perf/watt</div>
+      <div class="plotwell">
+        <div id="plot"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Readout</h2>
+      <div class="sub">current best per axis</div>
+      <div class="meters">
+        <div class="meter">
+          <div class="k">decode peak</div>
+          <div class="v" id="m-decode">— <small>tok/s</small></div>
+          <div class="cfg" id="m-decode-cfg">—</div>
+        </div>
+        <div class="meter">
+          <div class="k">prefill peak</div>
+          <div class="v" id="m-prefill">— <small>tok/s</small></div>
+          <div class="cfg" id="m-prefill-cfg">—</div>
+        </div>
+        <div class="meter">
+          <div class="k">quality peak</div>
+          <div class="v" id="m-quality">— <small>elo</small></div>
+          <div class="cfg" id="m-quality-cfg">—</div>
+        </div>
+        <div class="meter">
+          <div class="k">roofline · best decode config</div>
+          <div class="gauge">
+            <div class="track"><div class="fill" id="g-fill"></div><div class="knee" id="g-knee" title="0.60 routing knee"></div></div>
+            <div class="row"><span id="g-eff">eff —</span><span class="bound unk" id="g-bound">—</span></div>
+            <div class="row"><span id="g-ach">achieved —</span><span id="g-ceil">ceiling —</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- timeline -->
+  <div class="panel">
+    <h2>Iteration timeline</h2>
+    <div class="sub" id="tl-sub">experiments over time · bar height = decode tok/s</div>
+    <div class="tl" id="timeline"></div>
+    <div class="tl-legend">
+      <span><i class="sw" style="background:var(--amber)"></i>contender</span>
+      <span><i class="sw" style="background:var(--ink)"></i>blessed</span>
+      <span><i class="sw" style="background:var(--oxblood)"></i>degenerate</span>
+      <span><i class="sw" style="background:#5a3b34"></i>failed</span>
+      <span><i class="sw" style="background:var(--violet)"></i>couldn't load</span>
+    </div>
+  </div>
+
+  <!-- bottom -->
+  <div class="bottom">
+    <div class="panel">
+      <h2>Current activity</h2>
+      <div class="sub">from MEMORY.md</div>
+      <div id="activity"><div class="muted">awaiting first checkpoint…</div></div>
+    </div>
+    <div class="panel">
+      <h2>Hypothesis queue</h2>
+      <div class="sub">next moves, prioritized</div>
+      <ol class="hyp" id="hyp"></ol>
+      <div id="hyp-empty" class="muted" style="padding-top:6px">queue empty — agent is exploring</div>
+    </div>
+  </div>
+
+  <footer>
+    <span id="foot-box">box: —</span>
+    <span id="foot-poll">polling /data…</span>
+  </footer>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const SVGNS = "http://www.w3.org/2000/svg";
+const C = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+let deadlineEpoch = null, serverNow = null, localAtSync = null, openEnded = false;
+
+function fmtDur(s){
+  if(s===null||s===undefined) return "OPEN-ENDED";
+  if(s<=0) return "00:00:00 · ENDED";
+  const d=Math.floor(s/86400); s-=d*86400;
+  const h=Math.floor(s/3600); s-=h*3600;
+  const m=Math.floor(s/60); const sec=Math.floor(s-m*60);
+  const p=n=>String(n).padStart(2,"0");
+  return (d>0?d+"d ":"")+`${p(h)}:${p(m)}:${p(sec)}`;
+}
+function tickClock(){
+  if(openEnded){ $("clock").textContent="∞"; $("clock").className="t open"; $("clock-label").textContent="open-ended"; return; }
+  if(deadlineEpoch===null){ return; }
+  const elapsed=(performance.now()-localAtSync)/1000;
+  const remaining=deadlineEpoch-(serverNow+elapsed);
+  $("clock").textContent=fmtDur(remaining);
+  $("clock").className="t"+(remaining<=0?" open":"");
+}
+setInterval(tickClock,1000);
+
+const fmt=(v,dp=1)=> (v===null||v===undefined)? "—" : (typeof v==="number"? v.toFixed(dp): v);
+
+function statusColor(s){
+  switch(s){
+    case "blessed": return C("--ink");
+    case "contender": return C("--amber");
+    case "degenerate": return C("--oxblood");
+    case "couldnt_load": return C("--violet");
+    case "failed": return "#5a3b34";
+    default: return C("--ink-faint");
+  }
+}
+
+function drawPlot(front){
+  const host=$("plot");
+  const W=640,H=430,ml=58,mr=18,mt=14,mb=44;
+  const pts=front.filter(p=>p.decode_tok_s!=null && p.quality!=null);
+  if(pts.length===0){
+    host.innerHTML='<div class="empty"><div><div class="big">AWAITING FIRST MEASUREMENT</div>'
+      +'<div style="margin-top:8px;font-size:12px">agent is in the research / build / smoke phase.<br>points plot here once a config clears correctness + measurement.</div></div></div>';
+    return;
+  }
+  const ceilings=pts.map(p=>p.roofline_ceiling_tok_s).filter(v=>v!=null);
+  const maxCeil=ceilings.length?Math.max(...ceilings):null;
+  const ydecs=pts.map(p=>p.decode_tok_s);
+  let ymax=Math.max(...ydecs, maxCeil||0)*1.12; if(ymax<=0) ymax=1;
+  const qs=pts.map(p=>p.quality);
+  let qmin=Math.min(...qs), qmax=Math.max(...qs);
+  if(qmin===qmax){ qmin-=40; qmax+=40; } else { const pad=(qmax-qmin)*0.12; qmin-=pad; qmax+=pad; }
+
+  const x=q=> ml + (q-qmin)/(qmax-qmin)*(W-ml-mr);
+  const y=v=> H-mb - (v/ymax)*(H-mt-mb);
+
+  const ppw=pts.map(p=>p.perf_per_watt).filter(v=>v!=null);
+  const ppwMax=ppw.length?Math.max(...ppw):0;
+  const rOf=p=>{ if(p.perf_per_watt!=null && ppwMax>0) return 5+ (p.perf_per_watt/ppwMax)*8; return 6.5; };
+
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Pareto frontier scatter">`;
+  s+=`<defs><filter id="glow" x="-60%" y="-60%" width="220%" height="220%">`
+    +`<feGaussianBlur stdDeviation="3.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>`;
+
+  // graticule
+  const gx=5, gy=5;
+  for(let i=0;i<=gx;i++){ const xx=ml+i*(W-ml-mr)/gx;
+    s+=`<line x1="${xx}" y1="${mt}" x2="${xx}" y2="${H-mb}" stroke="${C('--grid')}" stroke-width="1"/>`;
+    const qv=qmin+(qmax-qmin)*i/gx;
+    s+=`<text x="${xx}" y="${H-mb+16}" fill="${C('--ink-faint')}" font-size="10" font-family="${C('--mono')}" text-anchor="middle">${qv.toFixed(0)}</text>`;
+  }
+  for(let i=0;i<=gy;i++){ const yy=mt+i*(H-mt-mb)/gy;
+    s+=`<line x1="${ml}" y1="${yy}" x2="${W-mr}" y2="${yy}" stroke="${C('--grid')}" stroke-width="1"/>`;
+    const vv=ymax*(1-i/gy);
+    s+=`<text x="${ml-8}" y="${yy+3}" fill="${C('--ink-faint')}" font-size="10" font-family="${C('--mono')}" text-anchor="end">${vv.toFixed(0)}</text>`;
+  }
+  // axis labels
+  s+=`<text x="${(ml+W-mr)/2}" y="${H-6}" fill="${C('--ink-dim')}" font-size="10" letter-spacing="2" text-anchor="middle">QUALITY · ELO</text>`;
+  s+=`<text x="14" y="${(mt+H-mb)/2}" fill="${C('--ink-dim')}" font-size="10" letter-spacing="2" text-anchor="middle" transform="rotate(-90 14 ${(mt+H-mb)/2})">DECODE · TOK/S</text>`;
+
+  // roofline ceiling reference trace
+  if(maxCeil!=null){
+    const yc=y(maxCeil);
+    s+=`<line x1="${ml}" y1="${yc}" x2="${W-mr}" y2="${yc}" stroke="${C('--cyan')}" stroke-width="1.2" stroke-dasharray="6 4" opacity="0.85"/>`;
+    s+=`<text x="${W-mr}" y="${yc-6}" fill="${C('--cyan')}" font-size="10" font-family="${C('--mono')}" text-anchor="end">roofline ceiling ${maxCeil.toFixed(0)}</text>`;
+  }
+
+  // points (phosphor dots)
+  for(const p of pts){
+    const cx=x(p.quality), cy=y(p.decode_tok_s), r=rOf(p);
+    const col=statusColor(p.status);
+    s+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="${col}" filter="url(#glow)" opacity="0.92"/>`;
+    if(p.status==="blessed"){ s+=`<circle cx="${cx}" cy="${cy}" r="${r+4}" fill="none" stroke="${C('--ink')}" stroke-width="1.3" opacity="0.9"/>`; }
+    const label=(p.model||"?")+(p.quant?(" "+p.quant):"");
+    s+=`<text x="${cx+r+5}" y="${cy+3}" fill="${C('--ink-dim')}" font-size="10" font-family="${C('--mono')}">${escapeXml(label)}</text>`;
+  }
+  s+=`</svg>`;
+  host.innerHTML=s;
+}
+function escapeXml(t){return String(t).replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));}
+
+function drawTimeline(tl){
+  const host=$("timeline");
+  if(!tl||tl.length===0){ host.innerHTML='<div class="muted" style="align-self:center">no experiments logged yet</div>'; return; }
+  const decs=tl.map(t=>t.decode_tok_s).filter(v=>v!=null);
+  const dmax=decs.length?Math.max(...decs):1;
+  host.innerHTML=tl.map(t=>{
+    const h=t.decode_tok_s!=null? Math.max(8, (t.decode_tok_s/dmax)*100) : 12;
+    const col=statusColor(t.status);
+    const title=`${t.status}${t.decode_tok_s!=null?(" · "+t.decode_tok_s.toFixed(1)+" tok/s"):""}`;
+    return `<i style="height:${h}%;background:${col}" title="${title}"></i>`;
+  }).join("");
+}
+
+function setMeter(prefix, best, unit, dp){
+  if(best && best.value!=null){
+    $(prefix).innerHTML=`${fmt(best.value,dp)} <small>${unit}</small>`;
+    const cfg=best.config||{};
+    $(prefix+"-cfg").textContent=(cfg.model||"?")+(cfg.quant?(" · "+cfg.quant):"");
+  } else { $(prefix).innerHTML=`— <small>${unit}</small>`; $(prefix+"-cfg").textContent="—"; }
+}
+
+function drawRoofline(r){
+  if(!r || r.efficiency==null){
+    $("g-fill").style.width="0%"; $("g-eff").textContent="eff —";
+    $("g-bound").textContent="—"; $("g-bound").className="bound unk";
+    $("g-ach").textContent="achieved —"; $("g-ceil").textContent="ceiling —";
+    $("g-knee").style.left="60%"; return;
+  }
+  const eff=r.efficiency;
+  $("g-fill").style.width=Math.min(100,eff*100).toFixed(0)+"%";
+  $("g-eff").textContent="eff "+(eff*100).toFixed(0)+"%";
+  $("g-knee").style.left="60%";
+  const mem=eff>=0.60;
+  $("g-bound").textContent=mem?"memory-bound":"kernel-bound";
+  $("g-bound").className="bound "+(mem?"mem":"ker");
+  $("g-ach").textContent="achieved "+(r.achieved!=null?r.achieved.toFixed(1):"—");
+  $("g-ceil").textContent="ceiling "+(r.ceiling!=null?r.ceiling.toFixed(1):"—");
+}
+
+function drawActivity(phase){
+  const host=$("activity");
+  const keys=Object.keys(phase||{});
+  if(keys.length===0){ host.innerHTML='<div class="muted">awaiting first checkpoint…</div>'; return; }
+  const order=["status right now","baseline engine","baseline config","autonomy tier"];
+  const seen=new Set();
+  let rows="";
+  const push=(k,label)=>{ if(phase[k]!=null && phase[k]!==""){ rows+=`<div class="kv"><div class="k">${label}</div><div class="val">${escapeHtml(phase[k])}</div></div>`; seen.add(k);} };
+  push("status right now","doing"); push("baseline engine","engine");
+  push("baseline config","config"); push("autonomy tier","tier");
+  for(const k of keys){ if(!seen.has(k)){ rows+=`<div class="kv"><div class="k">${escapeHtml(k)}</div><div class="val">${escapeHtml(phase[k])}</div></div>`; } }
+  host.innerHTML=rows||'<div class="muted">awaiting first checkpoint…</div>';
+}
+function escapeHtml(t){return String(t).replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));}
+
+function drawHyp(list){
+  const ol=$("hyp"), empty=$("hyp-empty");
+  if(!list||list.length===0){ ol.innerHTML=""; empty.style.display="block"; return; }
+  empty.style.display="none";
+  ol.innerHTML=list.map(h=>`<li>${escapeHtml(h)}</li>`).join("");
+}
+
+async function poll(){
+  try{
+    const res=await fetch("/data",{cache:"no-store"});
+    const d=await res.json();
+    if(d.error){ $("foot-poll").textContent="data error: "+d.error; return; }
+
+    // clock sync
+    serverNow=d.now; localAtSync=performance.now();
+    const camp=d.campaign||{};
+    openEnded=(camp.duration_label==="open")||(camp.deadline_epoch==null && d.remaining_s==null);
+    deadlineEpoch=camp.deadline_epoch??null;
+    tickClock();
+
+    // strip
+    $("nick").textContent="— · "+(camp.nickname||"unnamed");
+    $("tier").textContent="TIER "+((camp.autonomy_tier||"—").replace("T",""));
+    $("phase-chip").textContent=(camp.state||"running");
+    $("count-chip").textContent=(d.n_records||0)+" runs · "+(d.front?d.front.length:0)+" on front";
+    const st=camp.state||"running";
+    $("livedot").className="dot"+(st==="running"?" beat":"");
+    $("livetext").textContent= st==="completed" ? "complete" : "live";
+
+    // plot + meters + timeline
+    drawPlot(d.front||[]);
+    setMeter("m-decode", d.best?.decode, "tok/s",1);
+    setMeter("m-prefill", d.best?.prefill, "tok/s",1);
+    setMeter("m-quality", d.best?.quality, "elo",0);
+    drawRoofline(d.roofline_now);
+    drawTimeline(d.timeline);
+    $("tl-sub").textContent=`${d.n_records||0} experiments · bar = decode tok/s · color = status`;
+    drawActivity(d.phase);
+    drawHyp(d.hypotheses);
+
+    $("foot-box").textContent="box: "+(camp.nickname||"—");
+    $("foot-poll").textContent="updated "+new Date().toLocaleTimeString();
+  }catch(e){
+    $("foot-poll").textContent="connection lost — retrying…";
+    $("livedot").className="dot"; $("livetext").textContent="offline";
+  }
+}
+poll();
+setInterval(poll,4000);
+</script>

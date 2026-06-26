@@ -1,0 +1,15 @@
+# Secrets — NEVER commit (filled-in startup holds the SSH password)
+startup.md
+*.pass
+*_secrets*
+
+# Campaign state has its own nested git repo
+boxes/
+
+# Original bundle + extraction scratch
+crucible.tar.gz
+_tb/
+
+# Python / scratch
+__pycache__/
+*.pyc

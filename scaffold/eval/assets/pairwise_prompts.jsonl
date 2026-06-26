@@ -1,0 +1,3 @@
+{"id": "p001", "prompt": "Explain why batch-1 LLM decode on a CPU is memory-bandwidth-bound rather than compute-bound, in three sentences."}
+{"id": "p002", "prompt": "A user has an old AVX-less server with lots of RAM. Recommend one concrete strategy to run a capable model quickly on it, and justify it in two sentences."}
+{"id": "p003", "prompt": "Write a short, clear docstring for a function that re-routes an optimizer to a kernel-bound or memory-bound action space based on roofline efficiency."}

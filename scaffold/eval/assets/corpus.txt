@@ -1,0 +1,9 @@
+[SEED — replace/expand with held-out text during the campaign's first research phase.]
+The bench box came off a pallet of decommissioned 1U servers, two sockets of an
+ISA generation that never learned the wide vector tricks the newer chips take for
+granted. What it does have is memory channels, and at batch one that is the only
+currency that matters: every generated token drags the active weights across the bus
+exactly once, and the bus does not care how clever the kernel is once it is full.
+The work, then, is not to chase peak FLOPs that the silicon will never reach, but to
+move fewer bytes per token and to keep the few vector lanes that exist busy with the
+integer dot products that quantized weights actually need.

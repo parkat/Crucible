@@ -1,0 +1,16 @@
+# Secrets — NEVER commit
+startup.md
+*.pass
+*_secrets*
+~/.ssh/crucible_*
+
+# Scratch & large artifacts
+work/
+*.gguf
+*.bin
+*.safetensors
+__pycache__/
+*.pyc
+
+# Verifier audit is machine-local
+verify_audit.jsonl

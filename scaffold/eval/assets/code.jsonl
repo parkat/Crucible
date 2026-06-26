@@ -1,0 +1,2 @@
+{"id": "c001", "prompt": "Write a Python function `active_bytes(params, bytes_per_weight)` returning their product.", "tests": "assert active_bytes(3_000_000_000, 0.5) == 1_500_000_000\nassert active_bytes(0, 2.0) == 0"}
+{"id": "c002", "prompt": "Write a Python function `dominates(a, b)` where a and b are (speed, quality) tuples; return True iff a is >= b on both and > on at least one.", "tests": "assert dominates((10,5),(9,5)) is True\nassert dominates((10,5),(10,5)) is False\nassert dominates((10,4),(9,5)) is False"}
