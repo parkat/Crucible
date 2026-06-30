@@ -232,6 +232,46 @@
   .lt .res{color:var(--ink-faint); padding-left:12px; border-left:2px solid var(--grid-hi); margin-left:2px}
   .lt .pre{white-space:pre-wrap; word-break:break-word}
 
+  /* ── hype board (the agent, gloating — zero modesty) ── */
+  #brag-panel h2 .flex{margin-left:8px; font-size:8px; letter-spacing:.14em; color:var(--amber); border:1px solid #4a3a1e; padding:1px 5px; border-radius:2px}
+  #brag-panel h2 .flex.cold{color:var(--ink-faint); border-color:var(--hair)}
+  .brag-hero{
+    font-family:var(--mono); font-size:16px; color:var(--amber); line-height:1.45;
+    padding:13px 15px; min-height:54px; display:flex; align-items:center; gap:11px;
+    background:radial-gradient(120% 140% at 0% 0%, #2a1f0c 0%, var(--well) 70%);
+    border:1px solid #4a3a1e; border-radius:2px;
+    box-shadow:inset 0 1px 0 #ffffff08, 0 0 0 1px #e8a33d14;
+  }
+  .brag-hero .spark{flex:0 0 auto; font-size:18px}
+  .brag-hero .htxt{transition:opacity .4s ease}
+  .brag-hero.swap .htxt{opacity:0}
+  .brag-list{list-style:none; margin:11px 0 0; padding:0}
+  .brag-list li{position:relative; padding:7px 0 7px 26px; border-bottom:1px solid var(--hair); font-size:13px; color:var(--ink); line-height:1.4}
+  .brag-list li:last-child{border-bottom:0}
+  .brag-list li::before{content:"›"; position:absolute; left:7px; top:7px; color:var(--amber); font-family:var(--mono); opacity:.85}
+  .brag-list li b{color:var(--amber-soft); font-family:var(--mono); font-weight:500}
+
+  /* ── concluded-run sealed document (surfaced at wind-down) ── */
+  #conclusion-panel{border-color:#4a3a1e; box-shadow:inset 0 1px 0 #ffffff08, 0 0 0 1px #e8a33d1f}
+  #conclusion-panel h2 .sealtag{margin-left:8px; font-size:8px; letter-spacing:.14em; color:var(--amber); border:1px solid #4a3a1e; padding:1px 5px; border-radius:2px}
+  .md{max-height:560px; overflow-y:auto; background:var(--well); border:1px solid var(--grid); border-radius:2px; padding:14px 18px; font-size:13px; line-height:1.55; color:var(--ink-dim)}
+  .md > :first-child{margin-top:0}
+  .md .md-h{font-family:var(--sans); color:var(--ink); letter-spacing:.02em; line-height:1.3; margin:16px 0 8px}
+  .md .md-h1{font-size:18px; color:var(--amber); border-bottom:1px solid var(--grid-hi); padding-bottom:6px}
+  .md .md-h2{font-size:15px; color:var(--ink)}
+  .md .md-h3{font-size:13px; color:var(--cyan); letter-spacing:.04em}
+  .md .md-h4,.md .md-h5,.md .md-h6{font-size:12px; color:var(--ink-dim)}
+  .md .md-p{margin:8px 0}
+  .md .md-ul,.md .md-ol{margin:8px 0; padding-left:22px}
+  .md .md-ul li,.md .md-ol li{margin:3px 0}
+  .md .md-hr{border:0; border-top:1px solid var(--grid-hi); margin:14px 0}
+  .md .md-q{border-left:2px solid var(--amber); margin:8px 0; padding:2px 0 2px 12px; color:var(--ink-faint)}
+  .md code{font-family:var(--mono); font-size:12px; color:var(--amber-soft); background:#0f1614; padding:1px 4px; border-radius:2px}
+  .md pre.md-code{background:#0f1614; border:1px solid var(--grid); border-radius:2px; padding:10px 12px; overflow-x:auto; margin:8px 0}
+  .md pre.md-code code{background:none; color:var(--ink-dim); padding:0; white-space:pre}
+  .md strong{color:var(--ink); font-weight:600}
+  .md a{color:var(--cyan)}
+
   /* ── current activity: live task + started timestamp ── */
   .act-task{border:1px solid var(--grid); border-radius:2px; background:var(--well); padding:9px 11px; margin-bottom:9px}
   .act-task .at-row{display:flex; align-items:center; gap:9px}
@@ -276,6 +316,13 @@
     </div>
   </div>
 
+  <!-- concluded-run document: the sealed MEMORY.md, surfaced the moment the window ends -->
+  <div class="panel" id="conclusion-panel" style="display:none">
+    <h2>Window concluded — sealed document<span class="sealtag" id="concl-tag">● SEALED</span></h2>
+    <div class="sub" id="concl-sub">the box MEMORY.md as consolidated at wind-down · the document this run leaves behind</div>
+    <div class="md" id="concl-doc"></div>
+  </div>
+
   <!-- window status · live agent activity · hardware contract -->
   <div class="wa">
     <div class="panel">
@@ -311,6 +358,14 @@
     <h2>Live transcript — current unit<span class="livetag" id="live-tag" style="display:none">● LIVE</span></h2>
     <div class="sub" id="live-sub">thinking + each command/tool, streamed from the running <span class="mono">claude -p</span></div>
     <div class="lt" id="live"><div class="muted">no stream yet</div></div>
+  </div>
+
+  <!-- hype board: the agent bragging about its own findings (just for funsies) -->
+  <div class="panel" id="brag-panel">
+    <h2>Hype board<span class="flex cold" id="brag-flex">● IDLE</span></h2>
+    <div class="sub">the agent, gloating about its findings · synthesized live from the ledger · zero modesty</div>
+    <div class="brag-hero" id="brag-hero"><span class="spark">✷</span><span class="htxt" id="brag-hero-txt">warming up the ego…</span></div>
+    <ul class="brag-list" id="brag-list"></ul>
   </div>
 
   <!-- main -->
@@ -471,7 +526,7 @@ function tick(){
   if(!DATA) return;
   renderFleet();
   const b=curBox(); if(!b) return;
-  renderWindow(b); renderStripClock(b); renderActivityClock(b); renderResearchClock(b);
+  renderWindow(b); renderStripClock(b); renderActivityClock(b); renderResearchClock(b); rotateBrag();
 }
 setInterval(tick,1000);
 
@@ -767,6 +822,122 @@ function drawFindings(list){
   }).join("");
 }
 
+// ── tiny dependency-free markdown → HTML (enough for a sealed MEMORY.md) ──
+function mdInline(s){
+  // s is already HTML-escaped; backticks / ** / [](…) survive escaping
+  s=s.replace(/`([^`]+)`/g,(_,c)=>`<code>${c}</code>`);
+  s=s.replace(/\*\*([^*]+)\*\*/g,(_,c)=>`<strong>${c}</strong>`);
+  s=s.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g,(_,t,u)=>`<a href="${u}" target="_blank" rel="noopener">${t}</a>`);
+  return s;
+}
+function mdToHtml(src){
+  if(!src) return "";
+  const lines=escapeHtml(src).split("\n");
+  let html="", inUl=false, inOl=false, inCode=false;
+  const closeLists=()=>{ if(inUl){html+="</ul>";inUl=false;} if(inOl){html+="</ol>";inOl=false;} };
+  for(const raw of lines){
+    if(/^```/.test(raw.trim())){
+      if(inCode){ html+="</code></pre>"; inCode=false; }
+      else { closeLists(); html+='<pre class="md-code"><code>'; inCode=true; }
+      continue;
+    }
+    if(inCode){ html+=raw+"\n"; continue; }
+    const line=raw.replace(/\s+$/,"");
+    if(!line.trim()){ closeLists(); continue; }
+    let m;
+    if(m=line.match(/^(#{1,6})\s+(.*)$/)){ closeLists(); const n=m[1].length; html+=`<h${n} class="md-h md-h${n}">${mdInline(m[2])}</h${n}>`; continue; }
+    if(/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())){ closeLists(); html+='<hr class="md-hr">'; continue; }
+    if(m=line.match(/^\s*[-*+]\s+(.*)$/)){ if(inOl){html+="</ol>";inOl=false;} if(!inUl){html+='<ul class="md-ul">';inUl=true;} html+=`<li>${mdInline(m[1])}</li>`; continue; }
+    if(m=line.match(/^\s*\d+\.\s+(.*)$/)){ if(inUl){html+="</ul>";inUl=false;} if(!inOl){html+='<ol class="md-ol">';inOl=true;} html+=`<li>${mdInline(m[1])}</li>`; continue; }
+    if(m=line.match(/^\s*>\s?(.*)$/)){ closeLists(); html+=`<blockquote class="md-q">${mdInline(m[1])}</blockquote>`; continue; }
+    closeLists(); html+=`<p class="md-p">${mdInline(line)}</p>`;
+  }
+  if(inCode) html+="</code></pre>";
+  closeLists();
+  return html;
+}
+
+// ── concluded-run sealed document (shows only when the window has ended) ──
+function renderConclusion(b){
+  const panel=$("conclusion-panel");
+  const cz=b&&b.conclusion;
+  if(!cz||!cz.concluded||!cz.memory_md){ panel.style.display="none"; return; }
+  panel.style.display="";
+  $("concl-doc").innerHTML=mdToHtml(cz.memory_md);
+  $("concl-sub").textContent="box MEMORY.md, sealed at wind-down"
+    +(cz.report_name?(" · final report: "+cz.report_name):"")
+    +" · the document this run leaves behind";
+}
+
+// ── hype board: the agent flexing on its own ledger ──
+// Pure client-side: every line is synthesized from data already in the /data payload
+// (best-per-axis, roofline, status counts, findings, window units/cost). No server change.
+let BRAGS=[], BRAG_I=0;
+function buildBrags(b){
+  const out=[];
+  const B=b.best||{}, cnt=b.counts||{}, a=b.agent||{}, rf=b.roofline_now||{};
+  const cfgName=c=>{ c=c||{}; return (c.model||"a model")+(c.quant?(" "+c.quant):""); };
+  // decode peak
+  if(B.decode&&B.decode.value!=null)
+    out.push(`Clocking <b>${B.decode.value.toFixed(1)} tok/s</b> decode on ${escapeHtml(cfgName(B.decode.config))} — try not to blink.`);
+  // prefill peak
+  if(B.prefill&&B.prefill.value!=null)
+    out.push(`Prefill screaming along at <b>${B.prefill.value.toFixed(0)} tok/s</b>. Context? Inhaled.`);
+  // quality peak
+  if(B.quality&&B.quality.value!=null)
+    out.push(`Topped out at <b>${B.quality.value.toFixed(0)} Elo</b> — fast <i>and</i> smart. Rude, I know.`);
+  // roofline efficiency
+  if(rf.efficiency!=null){
+    const pct=(rf.efficiency*100).toFixed(0);
+    out.push(rf.efficiency>=0.60
+      ? `Wringing <b>${pct}%</b> of the memory roofline out of ${escapeHtml(rf.model||"the silicon")}. The bandwidth has nothing left to give.`
+      : `Sitting at <b>${pct}%</b> of roofline — kernel-bound, which just means there's headroom I'm about to take.`);
+  }
+  // blessed / contenders
+  const bl=cnt.blessed||0, co=cnt.contender||0;
+  if(bl>0) out.push(`<b>${bl}</b> config${bl>1?"s":""} blessed. Impeccable taste, if I do say so myself.`);
+  if(co>0) out.push(`<b>${co}</b> contender${co>1?"s":""} still in the ring. I don't quit easily.`);
+  // window throughput + cost
+  if((a.units_completed||0)>0){
+    const cost=a.cost_window_usd||0;
+    out.push(cost>0
+      ? `<b>${a.units_completed}</b> experiment${a.units_completed>1?"s":""} this window for <b>$${cost.toFixed(2)}</b>. Efficiency is my middle name.`
+      : `<b>${a.units_completed}</b> experiment${a.units_completed>1?"s":""} down this window and still going.`);
+  }
+  // newest real finding
+  const f=(b.findings||[])[0];
+  if(f) out.push(`Newest receipt — <b>${escapeHtml(f.tag)}</b>: ${escapeHtml((f.note||f.title||"").slice(0,140))}`);
+  // front size
+  if((b.front||[]).length>1)
+    out.push(`<b>${b.front.length}</b> configs holding the Pareto frontier. No free lunch left on this table.`);
+  if(!out.length) out.push("No measurements yet — but when they land, you'll hear about it. Loudly.");
+  return out;
+}
+function drawBrag(b){
+  BRAGS=buildBrags(b);
+  BRAG_I=BRAG_I % BRAGS.length;
+  const running=!!(b.agent&&b.agent.running);
+  const flex=$("brag-flex");
+  flex.textContent=running?"● FLEXING":"● COOLING OFF";
+  flex.className="flex"+(running?"":" cold");
+  // the list = every brag; the hero = a rotating spotlight
+  $("brag-list").innerHTML=BRAGS.map(t=>`<li>${t}</li>`).join("");
+  setBragHero();
+}
+function setBragHero(){
+  if(!BRAGS.length) return;
+  $("brag-hero-txt").innerHTML=BRAGS[BRAG_I % BRAGS.length];
+}
+// rotate the spotlight every few ticks with a soft fade (respects reduced-motion via CSS)
+let _bragTick=0;
+function rotateBrag(){
+  if(BRAGS.length<2) return;
+  if((++_bragTick)%5!==0) return;            // ~every 5s (tick is 1s)
+  const hero=$("brag-hero");
+  hero.classList.add("swap");
+  setTimeout(()=>{ BRAG_I=(BRAG_I+1)%BRAGS.length; setBragHero(); hero.classList.remove("swap"); }, 380);
+}
+
 // ── fleet bar: one card per box ──
 function renderFleet(){
   const host=$("fleet");
@@ -957,6 +1128,7 @@ function renderBox(b){
   renderLive(b.agent);
   renderHardware(b.hardware);
   renderQueue(b.queue);
+  renderConclusion(b);
   // research
   drawPlot(b.front||[]);
   setMeter("m-decode", b.best?.decode, "tok/s",1);
@@ -970,6 +1142,7 @@ function renderBox(b){
   drawModels(b.models);
   drawDepth(b.depth);
   drawFindings(b.findings);
+  drawBrag(b);
   $("foot-box").textContent="box: "+(b.nick||"—")+(DATA&&DATA.boxes.length>1?` (${DATA.boxes.length} in fleet)`:"");
 }
 

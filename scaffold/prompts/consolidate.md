@@ -47,3 +47,8 @@ git -C "$BOX" add -A && git -C "$BOX" commit -m "consolidate <date> window: MEMO
 
 The relauncher sets `campaign.json.state = "completed"` after you exit. Do **not** launch
 another unit. Tidy, commit, **STOP**.
+
+> Wind-down surfaces this in the dashboard: once `state = "completed"` the host monitor
+> renders the sealed `MEMORY.md` in its **"Window concluded — sealed document"** panel, so
+> the document this run leaves behind shows up in the window the moment it ends. A
+> well-reconciled MEMORY.md (step 1) is therefore the closing artifact a human reads first.

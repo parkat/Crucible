@@ -519,6 +519,30 @@ def _hardware(box: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 # per-box payload
 # ─────────────────────────────────────────────────────────────────────────────
+def _conclusion(box: str, md: str, win: dict) -> dict:
+    """The sealed window document, surfaced the moment the run concludes.
+
+    Wind-down procedure (scaffold/run_window.sh + prompts/consolidate.md): at wind-down the
+    consolidate unit reconciles MEMORY.md against the ledger and writes a FINAL report, then
+    the relauncher sets campaign.json.state = "completed" -> _window() reports phase "done".
+    So once `phase == "done"` the box MEMORY.md IS the consolidated, sealed document; we ship
+    its full markdown (and a pointer to the FINAL report) so the dashboard can show it in the
+    window the instant the run ends. Kept empty while running to keep the live payload light.
+    """
+    concluded = win.get("phase") == "done"
+    report = None
+    try:
+        finals = sorted(fn for fn in os.listdir(os.path.join(box, "reports"))
+                        if fn.startswith("FINAL_") and fn.endswith(".md"))
+        report = finals[-1] if finals else None
+    except OSError:
+        pass
+    return {
+        "concluded": concluded,
+        "memory_md": md if (concluded and md) else "",
+        "report_name": report,
+    }
+
 def build_box(box: str, now: float) -> dict:
     camp = _read_json(os.path.join(box, "campaign.json"), {}) or {}
     recs = ledger.load(os.path.join(box, "ledger.jsonl"))
@@ -582,6 +606,7 @@ def build_box(box: str, now: float) -> dict:
         },
         "phase": _phase(md),
         "memory_present": bool(md),
+        "conclusion": _conclusion(box, md, win),
         "models": _models_table(recs),
         "findings": _findings(recs),
         "depth": depth,
