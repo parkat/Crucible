@@ -21,11 +21,11 @@ Usage (box folder is argv[1]):
     boxpaths.py boxes/<nick> --wake                # EXECUTE an OS-appropriate wake (WoL)
     boxpaths.py boxes/<nick> --wake --dry-run      # print the wake command without running it
 
-Examples (Precision390 oracle):
-    --ssh        -> ssh -i ~/.ssh/crucible_Precision390 -o IdentitiesOnly=yes pt@192.168.1.206
-    --build      -> ~/crucible/engines/llama.cpp/build-cuda50/bin
-    --build --cpu-> ~/crucible/engines/llama.cpp/build/bin
-    --lock-path  -> ~/crucible/work/.box.lock
+Example shapes (all values come from the box's contracts, never from this file):
+    --ssh        -> ssh -i <ssh_key_path> <ssh_opts> <user>@<host>
+    --build      -> <remote_engine_dir>/build-cuda<NN>/bin   (NN from hardware.json gpu.arch sm_NN)
+    --build --cpu-> <remote_engine_dir>/build/bin
+    --lock-path  -> <remote_root>/work/.box.lock
 """
 from __future__ import annotations
 import argparse, json, os, re, shutil, subprocess, sys
