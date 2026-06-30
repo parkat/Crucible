@@ -60,6 +60,102 @@ def _phase(md: str) -> dict:
             fields[m.group(1).strip().lower()] = m.group(2).strip()
     return fields
 
+_QUANT_SUFFIX = re.compile(r"[-_](Q\d[_A-Za-z0-9]*|IQ\d[_A-Za-z0-9]*|TQ\d[_A-Za-z0-9]*|f16|bf16|fp16)$", re.I)
+
+def _norm_model(name: str) -> str:
+    """Collapse a model id to its family by stripping a trailing quant token."""
+    n = name or "?"
+    for _ in range(2):  # strip up to two trailing quant tokens (e.g. ...-Instruct-Q4_0)
+        n2 = _QUANT_SUFFIX.sub("", n)
+        if n2 == n:
+            break
+        n = n2
+    return n
+
+def _is_gpu(cfg: dict) -> bool:
+    b = (cfg.get("backend") or "").upper()
+    if "CUDA" in b or "GPU" in b:
+        return True
+    ngl = cfg.get("n_gpu_layers")
+    return bool(ngl) and ngl not in (0, "0")
+
+def _models_table(recs: list[dict]) -> list[dict]:
+    """One row per (model-family, quant): merge speed (CPU+GPU) and quality across records."""
+    groups: dict[tuple, dict] = {}
+    for r in recs:
+        cfg = r.get("config") or {}
+        raw = cfg.get("model")
+        if not raw:
+            continue  # finding/experiment record with no model — skip here
+        model = _norm_model(raw)
+        quant = cfg.get("quant", "") or ""
+        key = (model, quant)
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {"model": model, "quant": quant,
+                               "cpu_decode": None, "gpu_decode": None,
+                               "cpu_prefill": None, "gpu_prefill": None,
+                               "quality": None, "math_pass": None, "code_pass": None,
+                               "roofline_eff": None, "depth_drop_pct": None,
+                               "statuses": [], "n": 0, "last_epoch": 0}
+        g["n"] += 1
+        g["statuses"].append(r.get("status"))
+        g["last_epoch"] = max(g["last_epoch"], r.get("epoch") or 0)
+        gpu = _is_gpu(cfg)
+        def _hi(field, val):
+            if val is None:
+                return
+            cur = g[field]
+            g[field] = val if cur is None else max(cur, val)
+        _hi("gpu_decode" if gpu else "cpu_decode", r.get("decode_tok_s"))
+        _hi("gpu_prefill" if gpu else "cpu_prefill", r.get("prefill_tok_s"))
+        for f in ("quality", "math_pass", "code_pass", "roofline_eff"):
+            src = "roofline_efficiency" if f == "roofline_eff" else f
+            v = r.get(src)
+            if v is not None and g[f] is None:
+                g[f] = v
+    rows = list(groups.values())
+    for g in rows:
+        # a single sortable speed: best decode seen (gpu preferred, else cpu)
+        g["best_decode"] = g["gpu_decode"] if g["gpu_decode"] is not None else g["cpu_decode"]
+        # quality display: Elo if present, else objective composite (0..100) from math/code
+        if g["quality"] is not None:
+            g["quality_kind"] = "elo"
+            g["quality_score"] = g["quality"]
+        elif g["math_pass"] is not None or g["code_pass"] is not None:
+            m = g["math_pass"] or 0.0
+            c = g["code_pass"] or 0.0
+            g["quality_kind"] = "objective"
+            g["quality_score"] = round((m + c) / 2 * 100, 1)
+        else:
+            g["quality_kind"] = None
+            g["quality_score"] = None
+        # status precedence for the badge
+        order = ["blessed", "contender", "degenerate", "couldnt_load", "failed"]
+        g["status"] = next((s for s in order if s in g["statuses"]), (g["statuses"] or [None])[0])
+    rows.sort(key=lambda g: (g["best_decode"] is None, -(g["best_decode"] or 0)))
+    return rows
+
+_FIND_RE = re.compile(r"\b(NOVEL|KEY FINDING|VERDICT|DEFINITIVE|SYNTHESIS|HEADLINE|WIN|DEAD END|"
+                      r"CONFIRMED|NEGATIVE|ANTIDOTE|CONTRIBUTION|TEED UP)\b")
+
+def _findings(recs: list[dict]) -> list[dict]:
+    """Surface the marked discoveries (blessed records + notes flagged with caps markers)."""
+    out = []
+    for r in recs:
+        notes = r.get("notes", "") or ""
+        mark = _FIND_RE.search(notes)
+        if r.get("status") == "blessed" or mark:
+            cfg = r.get("config") or {}
+            title = cfg.get("finding") or cfg.get("experiment") or cfg.get("model") or "finding"
+            # first sentence of the note as the lede
+            lede = re.split(r"(?<=[.)])\s", notes.strip(), maxsplit=1)[0][:240]
+            out.append({"id": r.get("id"), "status": r.get("status"),
+                        "tag": (mark.group(1) if mark else "BLESSED"),
+                        "title": str(title)[:60], "note": lede, "epoch": r.get("epoch")})
+    out.sort(key=lambda f: -(f["epoch"] or 0))
+    return out[:12]
+
 def build_data() -> dict:
     camp = {}
     try:
@@ -88,6 +184,16 @@ def build_data() -> dict:
 
     # the "current best" decode config carries the roofline gauge
     top = max(front, key=lambda r: r.get("decode_tok_s") or -1) if front else None
+
+    # optional measured depth-curve dataset (the headline finding), read if present
+    depth = None
+    try:
+        depth = json.loads(_read(os.path.join(BOX, "depth.json")) or "null")
+    except json.JSONDecodeError:
+        depth = None
+
+    models = _models_table(recs)
+    findings = _findings(recs)
 
     return {
         "now": now,
@@ -126,6 +232,10 @@ def build_data() -> dict:
         "phase": _phase(md),
         "hypotheses": _hypotheses(md),
         "memory_present": bool(md),
+        "models": models,
+        "findings": findings,
+        "depth": depth,
+        "windows": camp.get("prior_windows", []),
     }
 
 
@@ -164,7 +274,7 @@ def main() -> int:
         print(f"[dashboard] box folder not found: {BOX}", file=sys.stderr)
         return 2
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
-    print(f"[dashboard] serving {BOX}\n[dashboard] open http://{a.host}:{a.port}/")
+    print(f"[dashboard] serving {BOX}\n[dashboard] open http://{a.host}:{a.port}/", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

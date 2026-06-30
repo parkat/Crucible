@@ -113,6 +113,43 @@
   .muted{color:var(--ink-faint); font-style:normal; font-family:var(--mono); font-size:11px}
   footer{display:flex; justify-content:space-between; color:var(--ink-faint); font-family:var(--mono); font-size:10px; letter-spacing:.06em; padding:2px 4px}
   @media(prefers-reduced-motion:reduce){*{animation:none!important}}
+
+  /* ── models table ── */
+  .tbl-scroll{overflow-x:auto}
+  table.models{width:100%; border-collapse:collapse; font-family:var(--mono); font-size:12px}
+  table.models th{font-family:var(--sans); font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-faint);
+    text-align:right; padding:5px 8px; border-bottom:1px solid var(--grid-hi); white-space:nowrap; cursor:pointer; user-select:none}
+  table.models th.l{text-align:left}
+  table.models th:hover{color:var(--amber)}
+  table.models td{padding:5px 8px; text-align:right; border-bottom:1px solid var(--hair); white-space:nowrap; font-variant-numeric:tabular-nums}
+  table.models td.l{text-align:left; color:var(--ink)}
+  table.models tr:hover td{background:#ffffff06}
+  .qpill{display:inline-block; padding:1px 6px; border-radius:2px; font-size:11px; border:1px solid var(--hair)}
+  .qpill.elo{color:var(--cyan); border-color:#2c4742}
+  .qpill.obj{color:var(--amber-soft); border-color:#4a3a1e}
+  .badge{font-size:9px; letter-spacing:.08em; text-transform:uppercase; padding:1px 6px; border-radius:2px}
+  .b-blessed{color:#0d1110; background:var(--ink)} .b-contender{color:var(--amber); border:1px solid #4a3a1e}
+  .b-degenerate{color:var(--oxblood); border:1px solid #5a2f26} .b-failed{color:var(--ink-faint); border:1px solid var(--hair)}
+  .dim{color:var(--ink-faint)}
+  .best-dec{color:var(--amber)} .best-gpu{color:var(--ink)}
+
+  /* ── depth chart ── */
+  .depth-legend{display:flex; flex-wrap:wrap; gap:12px 16px; margin-top:8px}
+  .depth-legend span{display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:11px; color:var(--ink-dim)}
+  .depth-legend i{width:14px; height:3px; border-radius:2px; display:inline-block}
+
+  /* ── findings ── */
+  .finds{display:flex; flex-direction:column; gap:0}
+  .find{padding:8px 0; border-bottom:1px solid var(--hair)}
+  .find:last-child{border-bottom:0}
+  .find .top{display:flex; align-items:center; gap:8px; margin-bottom:2px}
+  .find .tag{font-family:var(--mono); font-size:9px; letter-spacing:.1em; padding:1px 6px; border-radius:2px; color:var(--cyan); border:1px solid #2c4742}
+  .find .tag.neg{color:var(--oxblood); border-color:#5a2f26}
+  .find .tag.bless{color:var(--amber); border-color:#4a3a1e}
+  .find .ttl{font-family:var(--mono); font-size:11px; color:var(--ink-dim)}
+  .find .body{font-size:12px; color:var(--ink); line-height:1.4}
+  .seg{display:flex; gap:1px; height:7px; border-radius:2px; overflow:hidden; margin-top:3px; background:var(--well)}
+  .seg i{display:block}
 </style>
 
 <div class="wrap">
@@ -188,6 +225,43 @@
       <span><i class="sw" style="background:#5a3b34"></i>failed</span>
       <span><i class="sw" style="background:var(--violet)"></i>couldn't load</span>
     </div>
+  </div>
+
+  <!-- decode vs context depth (headline finding) -->
+  <div class="panel" id="depth-panel" style="display:none">
+    <h2>Decode throughput vs context depth</h2>
+    <div class="sub">% of zero-context decode retained as context grows · the no-KV-cache advantage</div>
+    <div class="plotwell"><div id="depthplot"></div></div>
+    <div class="depth-legend" id="depth-legend"></div>
+  </div>
+
+  <!-- all measured models -->
+  <div class="panel">
+    <h2>All measured models</h2>
+    <div class="sub" id="models-sub">every config that produced a measurement · decode/prefill tok/s · quality (Elo or objective) · click a header to sort</div>
+    <div class="tbl-scroll">
+      <table class="models" id="models-tbl">
+        <thead><tr>
+          <th class="l" data-k="model">model</th>
+          <th data-k="quant">quant</th>
+          <th data-k="cpu_decode">cpu dec</th>
+          <th data-k="gpu_decode">gpu dec</th>
+          <th data-k="cpu_prefill">cpu pp</th>
+          <th data-k="gpu_prefill">gpu pp</th>
+          <th data-k="quality_score">quality</th>
+          <th data-k="roofline_eff">roofline</th>
+          <th data-k="status">status</th>
+        </tr></thead>
+        <tbody id="models-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- key findings -->
+  <div class="panel">
+    <h2>Key findings</h2>
+    <div class="sub">discoveries logged to the ledger · newest first</div>
+    <div class="finds" id="finds"></div>
   </div>
 
   <!-- bottom -->
@@ -377,6 +451,106 @@ function drawHyp(list){
   ol.innerHTML=list.map(h=>`<li>${escapeHtml(h)}</li>`).join("");
 }
 
+// ── all-models table (sortable) ──
+let _models=[], _sortKey="best_decode", _sortDir=-1;
+const ARCH_COL={"transformer":"#b5503c","transformer-kvq":"#caa05a","conv-hybrid":"#5bc8b5","recurrent":"#9a86c4"};
+
+function num(v){return (v===null||v===undefined)?"<span class='dim'>—</span>":(typeof v==="number"?v.toFixed(v<10?2:(v<100?1:0)):v);}
+function badge(s){return `<span class="badge b-${s||'contender'}">${s||'?'}</span>`;}
+function qcell(m){
+  if(m.quality_score===null||m.quality_score===undefined) return "<span class='dim'>—</span>";
+  if(m.quality_kind==="elo") return `<span class="qpill elo" title="Elo (pairwise judge)">${m.quality_score.toFixed(0)} elo</span>`;
+  const mc=[];
+  if(m.math_pass!=null) mc.push("m"+(m.math_pass*100).toFixed(0));
+  if(m.code_pass!=null) mc.push("c"+(m.code_pass*100).toFixed(0));
+  return `<span class="qpill obj" title="objective math/code composite (0-100)">${m.quality_score.toFixed(0)}${mc.length?" · "+mc.join("/"):""}</span>`;
+}
+function drawModels(models){
+  _models=models||[];
+  $("models-sub").textContent=`${_models.length} configs measured · decode/prefill tok/s · quality = cyan Elo or amber objective(0-100) · click a header to sort`;
+  renderModels();
+}
+function renderModels(){
+  const body=$("models-body");
+  const rows=[..._models].sort((a,b)=>{
+    let x=a[_sortKey], y=b[_sortKey];
+    if(_sortKey==="model"||_sortKey==="quant"||_sortKey==="status"){ x=(x||"").toString(); y=(y||"").toString(); return _sortDir*x.localeCompare(y); }
+    x=(x==null?-1:x); y=(y==null?-1:y); return _sortDir*(x-y);
+  });
+  body.innerHTML=rows.map(m=>{
+    const col=ARCH_COL[m.arch]||null;
+    return `<tr>
+      <td class="l">${escapeHtml(m.model)}</td>
+      <td class="dim">${escapeHtml(m.quant||"—")}</td>
+      <td>${num(m.cpu_decode)}</td>
+      <td class="best-gpu">${num(m.gpu_decode)}</td>
+      <td class="dim">${num(m.cpu_prefill)}</td>
+      <td class="dim">${num(m.gpu_prefill)}</td>
+      <td>${qcell(m)}</td>
+      <td class="dim">${m.roofline_eff!=null?(m.roofline_eff*100).toFixed(0)+"%":"—"}</td>
+      <td>${badge(m.status)}</td></tr>`;
+  }).join("");
+}
+function initSort(){
+  document.querySelectorAll("#models-tbl th").forEach(th=>{
+    th.addEventListener("click",()=>{
+      const k=th.getAttribute("data-k");
+      if(_sortKey===k) _sortDir*=-1; else { _sortKey=k; _sortDir=(k==="model"||k==="quant"||k==="status")?1:-1; }
+      renderModels();
+    });
+  });
+}
+
+// ── decode-vs-depth chart (% retained) ──
+function drawDepth(depth){
+  const panel=$("depth-panel"), host=$("depthplot"), leg=$("depth-legend");
+  if(!depth||!depth.series||!depth.series.length){ panel.style.display="none"; return; }
+  panel.style.display="";
+  const D=depth.depths, S=depth.series;
+  const W=900,H=320,ml=52,mr=120,mt=14,mb=40;
+  const xmax=Math.max(...D);
+  const x=v=> ml + (v/xmax)*(W-ml-mr);
+  const y=p=> H-mb - (p/100)*(H-mt-mb);   // p = % retained, 0..~105
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="decode vs depth">`;
+  // graticule + y labels (% retained)
+  for(let p=0;p<=100;p+=25){ const yy=y(p);
+    s+=`<line x1="${ml}" y1="${yy}" x2="${W-mr}" y2="${yy}" stroke="${C('--grid')}"/>`;
+    s+=`<text x="${ml-8}" y="${yy+3}" fill="${C('--ink-faint')}" font-size="10" font-family="${C('--mono')}" text-anchor="end">${p}%</text>`;
+  }
+  D.forEach(d=>{ const xx=x(d);
+    s+=`<line x1="${xx}" y1="${mt}" x2="${xx}" y2="${H-mb}" stroke="${C('--grid')}"/>`;
+    s+=`<text x="${xx}" y="${H-mb+16}" fill="${C('--ink-faint')}" font-size="10" font-family="${C('--mono')}" text-anchor="middle">${d}</text>`;
+  });
+  s+=`<text x="${(ml+W-mr)/2}" y="${H-4}" fill="${C('--ink-dim')}" font-size="10" letter-spacing="2" text-anchor="middle">CONTEXT DEPTH · TOKENS</text>`;
+  s+=`<text x="13" y="${(mt+H-mb)/2}" fill="${C('--ink-dim')}" font-size="10" letter-spacing="2" text-anchor="middle" transform="rotate(-90 13 ${(mt+H-mb)/2})">% DECODE RETAINED</text>`;
+  let legend="";
+  S.forEach(ser=>{
+    const base=ser.tok_s[0]||1;
+    const col=ARCH_COL[ser.arch]||C('--ink-dim');
+    const dash=ser.backend==="CPU"?'stroke-dasharray="5 3"':'';
+    let path="";
+    ser.tok_s.forEach((v,i)=>{ const px=x(D[i]), py=y(100*v/base); path+=(i?"L":"M")+px+" "+py+" "; s+=`<circle cx="${px}" cy="${py}" r="2.6" fill="${col}"/>`; });
+    s+=`<path d="${path}" fill="none" stroke="${col}" stroke-width="1.8" opacity="0.92" ${dash}/>`;
+    const lastv=ser.tok_s[ser.tok_s.length-1], pct=Math.round(100*lastv/base);
+    s+=`<text x="${W-mr+6}" y="${y(100*lastv/base)+3}" fill="${col}" font-size="9.5" font-family="${C('--mono')}">${pct}%</text>`;
+    legend+=`<span><i style="background:${col}"></i>${escapeHtml(ser.label)} <span class="dim">· ${ser.backend}</span></span>`;
+  });
+  s+=`</svg>`; host.innerHTML=s; leg.innerHTML=legend;
+}
+
+// ── findings ──
+function drawFindings(list){
+  const host=$("finds");
+  if(!list||!list.length){ host.innerHTML='<div class="muted">no findings logged yet</div>'; return; }
+  const neg=new Set(["DEAD END","NEGATIVE","DEFINITIVE","VERDICT"]);
+  host.innerHTML=list.map(f=>{
+    const cls=f.status==="blessed"?"bless":(neg.has(f.tag)?"neg":"");
+    return `<div class="find"><div class="top"><span class="tag ${cls}">${escapeHtml(f.tag)}</span>`
+      +`<span class="ttl">${escapeHtml(f.title)}</span>${f.status==="blessed"?'<span class="badge b-blessed">blessed</span>':''}</div>`
+      +`<div class="body">${escapeHtml(f.note)}</div></div>`;
+  }).join("");
+}
+
 async function poll(){
   try{
     const res=await fetch("/data",{cache:"no-store"});
@@ -409,6 +583,9 @@ async function poll(){
     $("tl-sub").textContent=`${d.n_records||0} experiments · bar = decode tok/s · color = status`;
     drawActivity(d.phase);
     drawHyp(d.hypotheses);
+    drawModels(d.models);
+    drawDepth(d.depth);
+    drawFindings(d.findings);
 
     $("foot-box").textContent="box: "+(camp.nickname||"—");
     $("foot-poll").textContent="updated "+new Date().toLocaleTimeString();
@@ -417,6 +594,7 @@ async function poll(){
     $("livedot").className="dot"; $("livetext").textContent="offline";
   }
 }
+initSort();
 poll();
 setInterval(poll,4000);
 </script>
