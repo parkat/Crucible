@@ -275,6 +275,16 @@ def _jsonl(text: str) -> list[dict]:
             pass
     return out
 
+def _iso_epoch(s):
+    """Parse a `date -Is` driver-log timestamp (e.g. 2026-06-30T13:47:19-07:00) to epoch."""
+    if not s:
+        return None
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(s).timestamp()
+    except (ValueError, TypeError):
+        return None
+
 def _tool_brief(name, inp: dict) -> str:
     """The command/target a tool_use is about — the 'commands' the agent is running."""
     inp = inp or {}
@@ -363,14 +373,17 @@ def _agent(box: str, win_start) -> dict:
             start_idx = i
     window_lines = lines[start_idx:] if start_idx is not None else []
     maxunit, terminal, cur_research, research_units = 0, None, False, 0
+    cur_started_iso = None
+    research_started_iso, research_unit_num = None, None
     for ln in window_lines:
-        m = re.search(r"launch unit #(\d+)", ln)
+        m = re.search(r"run_window:\s+(\S+)\s+launch unit #(\d+)", ln)
         if m:
-            n, is_r = int(m.group(1)), ("RESEARCH" in ln)
+            iso, n, is_r = m.group(1), int(m.group(2)), ("RESEARCH" in ln)
             if is_r:
                 research_units += 1
+                research_started_iso, research_unit_num = iso, n
             if n >= maxunit:
-                maxunit, cur_research = n, is_r
+                maxunit, cur_research, cur_started_iso = n, is_r, iso
         if "WINDDOWN reached" in ln:
             terminal = "winddown"
         elif "QUEUE_EMPTY sentinel" in ln:
@@ -382,6 +395,8 @@ def _agent(box: str, win_start) -> dict:
     info["current_unit"] = maxunit or None
     info["current_is_research"] = cur_research
     info["research_units"] = research_units
+    info["current_started_iso"] = cur_started_iso
+    info["current_started_epoch"] = _iso_epoch(cur_started_iso)
     info["driver_terminal"] = terminal
 
     # ---- per-unit claude -p output (JSONL stream, or legacy single-object json) ----
@@ -452,6 +467,26 @@ def _agent(box: str, win_start) -> dict:
         info["live"] = {"name": (newest["name"] if newest else None),
                         "num": (newest["num"] if newest else None),
                         "running": bool(newest), "events": []}
+
+    # ---- latest research round: the newest [RESEARCH] unit's summary + freshness ----
+    rr = None
+    if research_unit_num is not None:
+        rfile = next((r for r in reversed(recs)
+                      if r["num"] == research_unit_num and r["epoch"] >= win_start), None)
+        summary, running_r = "", False
+        if rfile:
+            running_r = (research_unit_num == maxunit) and not rfile["has_result"]
+            robjs = _jsonl(_tail(rfile["path"], 300_000))
+            result = next((o for o in reversed(robjs) if o.get("type") == "result"), None)
+            if result and isinstance(result.get("result"), str):
+                summary = result["result"][:1800]
+            else:  # not finished yet — show the most recent narration
+                texts = [e["text"] for e in _unit_events(robjs) if e["kind"] == "text"]
+                summary = "\n\n".join(texts[-3:])[:1800]
+        rr = {"unit": research_unit_num, "started_iso": research_started_iso,
+              "started_epoch": _iso_epoch(research_started_iso),
+              "running": running_r, "summary": summary}
+    info["research_round"] = rr
 
     info["cost_window_usd"] = round(info["cost_window_usd"], 4)
     info["cost_all_usd"] = round(info["cost_all_usd"], 4)
