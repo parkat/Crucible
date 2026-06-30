@@ -26,7 +26,7 @@ What it does:
     5. Appends a record to boxes/<nick>/verify_audit.jsonl and prints PASS/DIVERGENCE.
 """
 from __future__ import annotations
-import argparse, json, os, re, statistics, subprocess, sys, time
+import argparse, json, os, re, statistics, subprocess, time
 
 def sh(cmd: str, timeout: int = 600) -> tuple[int, str, str]:
     p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)

@@ -82,11 +82,13 @@ control. Do not modify `verify.py` — that's an eval-kernel change, gated at ev
 
 ## Credential hygiene
 
-`startup.md` holds a plaintext SSH password and the procedure grants you passwordless
+The setup wizard takes a plaintext SSH password (interactively) and grants passwordless
 sudo on the target. For disposable lab hardware this is fine, with these rules:
 
-- The filled-in `startup.md` (and anything containing the password) is **gitignored and
-  stays local** (`templates/gitignore` covers this).
+- Only the secret-free `startup.template.md` is tracked; any filled-in local copy
+  (`startup.md`/`startup.local.md`) and anything containing the password is **gitignored and
+  stays local** (the repo-root `.gitignore` covers this). Prefer entering the password only
+  when the wizard asks — never write it to a file.
 - Use the password **once** — to install the SSH key and write the sudoers grant — then
   rely on the key. **Do not retain the plaintext** in `MEMORY.md`, the ledger, or any
   committed file.

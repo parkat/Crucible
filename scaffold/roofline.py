@@ -16,7 +16,7 @@ CLI:
         --total-params 30e9 --active-params 3e9 --quant q4 --kv-bytes-per-token 0
 """
 from __future__ import annotations
-import argparse, json, sys
+import argparse, json
 
 # Bytes per stored weight by quant family (includes typical block/scale overhead).
 # These are PRIORS — refine from measured file sizes / params when you have them.

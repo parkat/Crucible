@@ -14,8 +14,8 @@ gets rewritten and the inner loop re-runs on top of it.
   draft model, speculation depth, compile flags). Automatic and cheap — use Optuna
   NSGA-II or TPE; **zero orchestrator-reasoning tokens** spent here. Grind the easy
   axes.
-- **L2 — kernel / engine modification.** When L1's front **stalls for K iterations**
-  *or* the **roofline says kernel-bound**, escalate to writing actual engine code: a
+- **L2 — kernel / engine modification.** When L1's front **stalls** (no gain in `front_stall_K`
+  measured records) *or* the **roofline says kernel-bound**, escalate to writing actual engine code: a
   rewritten integer-SIMD GEMM, a prefetch on the weight stream, a different quant block
   layout, a fork swap. **A winning patch becomes the new baseline engine, and L1
   restarts on top of it.** This is where "heavily modified inference engines" lives.
@@ -99,7 +99,9 @@ Research is a first-class phase, logged like any experiment — not a one-off at
 These are *current priors as of the date above*, seeded from a research pass. They are
 not fences and they go stale fast — re-run the research phase and update this section
 (it is doctrine, so surface the diff per `04`). Sources are named so you can re-verify;
-do not trust a number here without re-measuring it on the actual target.
+do not trust a number here without re-measuring it on the actual target. **Treat every
+product name and figure below as an illustrative prior to re-research, not a verified
+citation** — some may be speculative or already superseded by the time you read this.
 
 **Ternary / sub-2-bit via table lookup — the highest-leverage new memory-bound move on
 AVX-less hardware.** Microsoft's `bitnet.cpp` (MIT, built on llama.cpp + the T-MAC

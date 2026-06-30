@@ -46,25 +46,30 @@ dictates what is even worth searching — see `doctrine/03_PROPOSER_PLAYBOOK.md`
 - **Target** (the disposable salvage box): reachable over SSH with a sudo-capable user. Nothing
   is pre-installed — the agent builds the engine on the target itself. The box may be asleep;
   if `hardware.json` records Wake-on-LAN, the resolver can wake it.
-- **Models**: fetched over the internet as needed, or staged on a LAN store (`LAN_MODEL_STORE`
-  in `startup.md`) to avoid re-downloading.
+- **Models**: fetched over the internet as needed, or staged on a LAN store (the wizard asks
+  whether models are staged on a LAN path) to avoid re-downloading.
 
-## Start fresh — one paste, one instruction
+## Start fresh — drop in, answer the wizard
 
-1. **Dump every `.md` (and the rest of the apparatus) flat into one folder.** Files may be
-   flat, mis-nested, or already structured — it does not matter.
-2. **Paste your creds** into the fill-in block in `startup.md` (target IP, SSH user/pass, a
-   nickname for the box; optional LAN model store). Pick an autonomy tier and a campaign length.
-3. Tell the Claude Code session:
+1. **Get the files into one folder.** Download the [latest release](https://github.com/parkat/Crucible/releases)
+   zip and unzip it, or `git clone https://github.com/parkat/Crucible.git`. Files may be flat,
+   mis-nested, or already structured — it does not matter; the boot step repairs the layout.
+   *(If you cloned, first `cp startup.template.md startup.md` — the release zip already includes it.)*
+2. **Open a Claude Code session in that folder** and tell it:
 
    > follow startup.md
 
-That one flow now, end to end: **repairs the layout** (`preflight.py` rebuilds the canonical
-tree from the flat dump) → **installs a dedicated SSH key and discards the password** →
+3. **Answer the pickers.** The session runs a setup **wizard** — it asks you for the target box
+   (IP, SSH user/pass, a nickname; optional LAN model store), an **autonomy tier**, and a
+   **campaign length**. Nothing to pre-edit; the SSH password is used once to install a key, then
+   discarded (never written to disk).
+
+That one instruction then runs end to end: **repairs the layout** (`preflight.py` rebuilds the
+canonical tree from the flat dump) → **installs a dedicated SSH key and discards the password** →
 **scans the hardware into a COMPLETE contract** (ISA, measured bandwidth, GPU `sm_NN`/VRAM,
-Wake-on-LAN) → **writes `connection.json`** → **scaffolds the box folder** (its own git repo) →
-**starts the dashboard** → **seeds `MEMORY.md`** with research + a takeable hypothesis queue →
-**launches the loop**. One paste, one instruction.
+Wake-on-LAN) → **writes `connection.json`** → **scaffolds the box folder** (its own git repo, with
+a `STEERING.md` inbox) → **starts the dashboard** → **seeds `MEMORY.md`** with research + a takeable
+hypothesis queue → **launches the loop**. One instruction, answer a few questions, done.
 
 ## Run / resume the campaign
 
@@ -86,7 +91,7 @@ prose or on a session's memory. **The session is ephemeral; the campaign lives o
 Each box is driven by its own independent relauncher — run as many as you have hardware for:
 
 ```bash
-# 1. paste creds for the new nickname into startup.md, then:  "follow startup.md"
+# 1. in a fresh session: "follow startup.md" and answer the wizard for the new nickname
 # 2. drive it (in its own terminal):
 ./scaffold/run_window.sh boxes/<newnick> 24
 ```
@@ -220,7 +225,8 @@ to focus its detail panels.
 ```
 crucible/
   README.md              <- you are here
-  startup.md             <- entry point: fill-ins + pickers + boot procedure
+  LICENSE                <- MIT
+  startup.template.md    <- entry point: the setup wizard (copy to startup.md, or use the release's)
   doctrine/              <- the agent's constitution (read in full before acting)
     00_PRIME_DIRECTIVE.md    mission, physics, the invariant kernel
     01_RUBRIC.md             the Pareto axes + how quality is scored
@@ -231,15 +237,18 @@ crucible/
     06_OPERATIONS.md         the iteration loop, time discipline, resume protocol
   templates/             <- instantiated once per box
   scaffold/              <- runnable spine (ledger, scan, roofline, verifier, eval, dashboard)
+    preflight.py           rebuilds the canonical tree from a flat/mis-nested dump
     boxpaths.py            the box resolver: contracts -> concrete ssh/build/lock/wake commands
     run_window.sh          the external relauncher: owns the bounded-unit research loop
+    steer.py               drop an operator steering note into a box's STEERING.md inbox
     hardware_scan.sh       scans a box into a COMPLETE contract (ISA, BW, GPU, Wake-on-LAN)
     prompts/               unit.md + consolidate.md (box-agnostic; injected per run)
     dashboard/             host-side live monitor (server.py + index.html; fleet-aware)
     ledger.py roofline.py correctness.py verify.py eval/   <- scoring + the frozen eval funnel
-  boxes/<nickname>/      <- created per target box; the live campaign state
+  boxes/<nickname>/      <- created per target box; the live campaign state (its own git repo)
     connection.json        how to reach it   | hardware.json  what it is
     campaign.json          the current window | MEMORY.md + ledger.jsonl  the brain + log
+    STEERING.md            operator inbox (human-injected directions) | GATE_QUEUE.md  human gates
 ```
 
 ## Safety posture
@@ -247,4 +256,9 @@ crucible/
 Target boxes are disposable salvage. Bricking, SIGILL, and hard hangs are acceptable
 outcomes — but a wedged box must auto-recover or checkpoint so the campaign survives
 (`doctrine/05_SAFETY_RECOVERY.md`). The host is never the target. Credentials stay
-local and gitignored.
+local and gitignored — the SSH password is used once to install a key, then discarded, and
+nothing under `boxes/` (live campaign state, connection details) is ever tracked by this repo.
+
+## License
+
+[MIT](LICENSE) © 2026 Parker. Use it, fork it, run it on your own salvage hardware.

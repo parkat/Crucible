@@ -20,7 +20,7 @@ Usage:
     python3 scaffold/steer.py boxes/<nick> --list
 """
 from __future__ import annotations
-import argparse, json, os, re, sys
+import argparse, os, re, sys
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))

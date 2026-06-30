@@ -1,12 +1,24 @@
-# Secrets — NEVER commit (filled-in startup holds the SSH password)
+# ── Secrets — NEVER commit ──────────────────────────────────────────────────
+# Track only startup.template.md (the secret-free setup wizard). Any local,
+# filled-in copy (startup.md / startup.local.md) may hold the one-time SSH
+# password and stays private.
 startup.md
+startup.local.md
 *.pass
 *_secrets*
+*.pem
+id_ed25519*
+id_rsa*
 
-# Campaign state has its own nested git repo
+# Campaign state — each box is its own nested git repo, never in the public repo
 boxes/
 
-# Original bundle + extraction scratch
+# Release artifacts — built from `git archive`, regenerable, never committed
+crucible-*.zip
+/dist/
+
+# Local one-off prompts / bundles (may contain host details — never publish)
+crucible_cleanup_prompt.md
 crucible.tar.gz
 _tb/
 

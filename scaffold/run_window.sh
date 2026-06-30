@@ -38,7 +38,7 @@ done
 [ -d "$BOX" ] || { echo "run_window: box folder not found: $BOX" >&2; exit 2; }
 [ -f "$BOX/campaign.json" ] || { echo "run_window: missing $BOX/campaign.json" >&2; exit 2; }
 for p in "$UNIT_PROMPT" "$CONSOLIDATE_PROMPT"; do
-  [ -f "$p" ] || { echo "run_window: missing prompt $p (Task 5 / preflight should place it)" >&2; exit 2; }
+  [ -f "$p" ] || { echo "run_window: missing prompt $p (preflight should place it)" >&2; exit 2; }
 done
 
 # ---- long benches must not be reaped mid-run ----------------------------------

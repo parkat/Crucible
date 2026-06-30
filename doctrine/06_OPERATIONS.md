@@ -13,10 +13,17 @@ At campaign start, `campaign.json` is written with:
   "autonomy_tier": "T4",
   "duration_label": "3day",
   "start_epoch": 1750000000,
-  "deadline_epoch": 1750259200,     // null for open-ended
-  "state": "running"
+  "deadline_epoch": 1750259200,        // null for open-ended
+  "winddown_margin_frac": 0.10,        // winddown_epoch = deadline - (deadline-start)*frac
+  "n_measure_runs": 5,                 // bench repeats for median+variance
+  "front_stall_K": 8,                  // research-trigger: # measured records with no front gain
+  "roofline_efficiency_threshold": 0.60,
+  "quality_floor_frac_of_fp16": 0.70,
+  "state": "running"                   // -> "completed" after the relauncher consolidates
 }
 ```
+
+The threshold fields are agent-revisable priors; record any revision in `MEMORY.md`.
 
 **Every iteration**, shell `date +%s` and compare to `deadline_epoch`. Never estimate
 elapsed time from your sense of how long things took — that sense is unreliable and
@@ -31,30 +38,47 @@ Duration labels and their meaning:
 
 ## Wind-down protocol (set-length campaigns)
 
-As `now` approaches `deadline_epoch` (e.g. within the last ~10%):
+The **external relauncher** (`scaffold/run_window.sh`) owns the clock. It computes
+`winddown_epoch = deadline_epoch − (deadline_epoch − start_epoch) × winddown_margin_frac`
+(the last ~10% by default) and:
 
-1. Stop launching expensive new branches (no new L2/L3 escalations, no new big-model
-   downloads).
-2. Finish in-flight measurements and let the cheap L1 sampler keep refining.
-3. Write the **final report** to `reports/` (Pareto front, blessed configs, roofline
-   findings, what was ruled out, open hypotheses for next time) and set
-   `campaign.json.state = "completed"`.
+1. **Until `winddown_epoch`:** keep launching bounded units normally. **Wind-down ≠ stop** —
+   units run full-tilt right up to the wind-down edge.
+2. **At `winddown_epoch`:** stop launching research units and run the **consolidate** pass once
+   (`scaffold/prompts/consolidate.md`): reconcile `MEMORY.md` against the ledger, leave the queue
+   clean + tagged + takeable-top, drain the `STEERING.md` inbox, and write the **final report** to
+   `reports/FINAL_<date>_window.md` (Pareto front, blessed configs, roofline findings, what was
+   ruled out and where each negative localized the bottleneck, open hypotheses for next window).
+3. The relauncher then sets `campaign.json.state = "completed"` and exits.
 
-Open-ended campaigns never wind down; they periodically checkpoint a rolling report.
+A `work/QUEUE_EMPTY` sentinel (written by a unit that genuinely exhausts the queue) ends the
+window early the same way — straight to consolidate. Open-ended campaigns (`deadline_epoch =
+null`) never auto-wind-down; they run until the queue empties or the human stops them.
 
-## The iteration loop
+## The iteration loop (owned by the external relauncher)
+
+The loop lives **outside** any session, in `scaffold/run_window.sh`. It launches one bounded
+`claude -p` **unit** at a time; each unit does exactly the steps below for **ONE** queue item and
+then **STOPs**. The relauncher — not the unit — owns the clock and decides whether to launch the
+next unit, switch to research, or wind down (so a dead or derailed session can't run the campaign
+off the rails). A unit never loops or starts a second item.
 
 ```
-loop:
-  now = `date +%s`
-  if deadline_epoch and now >= deadline_epoch: run wind-down; stop
-  if deadline_epoch and now >= deadline_epoch - winddown_margin: enter wind-down mode
+# the relauncher, each turn:
+now = `date +%s`
+if winddown_epoch reached (or work/QUEUE_EMPTY present): run `consolidate` once -> state=completed -> exit
+if the Pareto front has not gained ground in front_stall_K *measured* records: next unit is a
+    web-research unit (refresh landscape, push fresh takeable hypotheses) — never two in a row
+else: launch a normal unit
+
+# one unit does, then STOPs:
+  # 0. STEER (operator inbox) — read boxes/<nick>/STEERING.md; an unprocessed note PREEMPTS the
+  #    queue (fold it in as the takeable top), then move it to Picked up / Dropped (consume-once)
 
   # 1. DECIDE (evidence-driven; 03)
   consult ledger + live Pareto front + roofline class of recent results
-  if front stalled K iters OR roofline says kernel-bound (and tier allows): escalate L2/L3
+  if front stalled OR roofline says kernel-bound (and tier allows): escalate L2/L3
   else: draw next config from the NSGA-II/TPE sampler (L1)
-  periodically: run a web-research phase; write findings to MEMORY.md
 
   # 2. BUILD (05)
   build for target's scanned ISA; cache by (SHA+flags+ISA)
@@ -98,8 +122,9 @@ On "resume this campaign":
 5. Check `git log` / working tree for an aborted self-modification; if the loop is
    broken, roll back to the last good commit (`04`).
 6. Check `GATE_QUEUE.md` for items the human may have approved/rejected while you were
-   gone.
-7. Continue the loop.
+   gone, and `STEERING.md` for any operator notes still pending.
+7. Hand the loop back to the relauncher: `./scaffold/run_window.sh boxes/<nickname>` (add an
+   hours argument to re-arm a fresh window). The session does **not** run the loop itself.
 
 **Never** reconstruct state from your sense of "what I was doing." Reconstruct from
 disk. The session is ephemeral; the campaign lives on disk.

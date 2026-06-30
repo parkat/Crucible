@@ -8,8 +8,8 @@ finds each file by name (disambiguating same-named files by a content marker), a
 misplaced files into place. Critical files missing entirely are reported precisely so the
 human can supply them.
 
-This does NOT create per-box campaign folders — that's startup.md step 5. Preflight only
-fixes the apparatus layout itself.
+This does NOT create per-box campaign folders — that's the box-setup step in startup.md.
+Preflight only fixes the apparatus layout itself.
 
 Usage:
     python3 preflight.py [root]            # validate AND repair (default root = cwd)
@@ -18,14 +18,14 @@ Usage:
 Exit code 0 = structure OK (after any repairs). Exit 1 = critical files still missing.
 """
 from __future__ import annotations
-import argparse, os, shutil, sys
+import argparse, os, shutil
 
 # canonical_path : (tier, marker)
 #   tier   = "critical" (apparatus can't run without it) | "seed" (regenerable; warn only)
 #   marker = a short substring that uniquely identifies the file's content, used to
 #            disambiguate same-named files (e.g. the two README.md). None = match by name.
 MANIFEST: dict[str, tuple[str, str | None]] = {
-    "startup.md":                              ("critical", "ENTRY POINT"),
+    "startup.template.md":                     ("critical", "ENTRY POINT"),
     "doctrine/00_PRIME_DIRECTIVE.md":          ("critical", "PRIME DIRECTIVE"),
     "doctrine/01_RUBRIC.md":                   ("critical", "01 — RUBRIC"),
     "doctrine/02_EVAL_FUNNEL.md":              ("critical", "02 — EVAL FUNNEL"),
@@ -45,6 +45,7 @@ MANIFEST: dict[str, tuple[str, str | None]] = {
     "scaffold/correctness.py":                 ("critical", "crucible correctness"),
     "scaffold/verify.py":                      ("critical", "INDEPENDENT VERIFIER"),
     "scaffold/eval/runner.py":                 ("critical", "crucible eval/runner.py"),
+    "scaffold/eval/eval_config.py":            ("critical", "Target-side eval driver"),
     "scaffold/dashboard/server.py":            ("critical", "crucible dashboard server"),
     "scaffold/dashboard/index.html":           ("critical", "crucible · campaign monitor"),
     "templates/MEMORY.template.md":            ("critical", "MEMORY — <NICKNAME>"),
