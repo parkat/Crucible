@@ -129,6 +129,14 @@ bounded units ──▶ wind-down (deadline − margin) ──▶ consolidate on
         └────────▶ queue empty (work/QUEUE_EMPTY sentinel) ──▶ consolidate ──▶ stop
 ```
 
+**Research is automatic, not a separate session.** The opening web-research phase seeds the
+queue at startup; thereafter `doctrine/03`'s "research whenever the front stalls" is enforced by
+the relauncher: when the Pareto front hasn't gained ground in `front_stall_K` **measured**
+records, the next unit is spent on a web-research phase (refresh the landscape, push 1–3 fresh
+takeable hypotheses to the queue) instead of grinding the stale queue — never two research units
+in a row, so a normal unit acts on the new hypotheses before the next research pass. You don't
+run a separate session to refill the queue; units both execute and refill it.
+
 `winddown_epoch = deadline − (deadline − start) × winddown_margin_frac`. **Wind-down ≠ stop:**
 units keep running until wind-down; only then does the session switch to consolidation-only
 (make `MEMORY.md` current, leave the queue clean + tagged + takeable-top, write the FINAL
