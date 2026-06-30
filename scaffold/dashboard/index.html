@@ -218,6 +218,19 @@
   .qclosed .ck{font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:5px}
   .qclosed .ci{font-family:var(--mono); font-size:11px; color:var(--ink-faint); padding:2px 0; display:flex; gap:6px}
   .qclosed .ci .cm{flex:0 0 auto}
+
+  /* ── live transcript (streamed from the running unit) ── */
+  #live-panel h2 .livetag{margin-left:8px; font-size:8px; letter-spacing:.14em; color:var(--cyan); border:1px solid #2c4742; padding:1px 5px; border-radius:2px}
+  .lt{max-height:360px; overflow-y:auto; background:var(--well); border:1px solid var(--grid); border-radius:2px; padding:8px 10px; font-family:var(--mono); font-size:11.5px; line-height:1.5}
+  .lt .e{padding:3px 0; border-bottom:1px solid #ffffff05}
+  .lt .e:last-child{border-bottom:0}
+  .lt .glyph{margin-right:7px; opacity:.85}
+  .lt .think{color:var(--ink-faint); font-style:italic}
+  .lt .txt{color:var(--ink-dim)}
+  .lt .tool{color:var(--amber)}
+  .lt .tool .nm{color:var(--cyan); margin-right:7px; text-transform:none}
+  .lt .res{color:var(--ink-faint); padding-left:12px; border-left:2px solid var(--grid-hi); margin-left:2px}
+  .lt .pre{white-space:pre-wrap; word-break:break-word}
 </style>
 
 <div class="wrap">
@@ -271,6 +284,13 @@
       <div class="sub">measured STREAM bandwidth = the roofline denominator</div>
       <div class="hw" id="hw"><div class="muted">no hardware.json</div></div>
     </div>
+  </div>
+
+  <!-- live transcript of the current unit (streamed from claude -p) -->
+  <div class="panel" id="live-panel">
+    <h2>Live transcript — current unit<span class="livetag" id="live-tag" style="display:none">● LIVE</span></h2>
+    <div class="sub" id="live-sub">thinking + each command/tool, streamed from the running <span class="mono">claude -p</span></div>
+    <div class="lt" id="live"><div class="muted">no stream yet</div></div>
   </div>
 
   <!-- main -->
@@ -733,7 +753,7 @@ function renderWindow(b){
 }
 
 // ── live agent activity (driver log + per-unit claude -p JSON) ──
-function ucol(u){ if(u.empty) return "var(--amber)"; if(u.torn) return "var(--ink-faint)"; return u.is_error?"var(--oxblood)":"var(--cyan)"; }
+function ucol(u){ if(!u.has_result) return u.torn?"var(--ink-faint)":"var(--amber)"; return u.is_error?"var(--oxblood)":"var(--cyan)"; }
 function renderAgent(a){
   const host=$("agent");
   if(!a||!a.log_present){ host.innerHTML='<div class="muted">no run_window.log yet — driver not started</div>'; $("agent-recent").innerHTML=""; return; }
@@ -757,9 +777,34 @@ function renderAgent(a){
   // recent units strip (oldest→newest), color = outcome
   const ru=a.recent_units||[];
   $("agent-recent").innerHTML=ru.map(u=>{
-    const lab=(u.kind==="consolidate"?"C":"#"+(u.num??"?"))+(u.empty?" (running)":(u.torn?" (torn)":(u.is_error?" error":" ok")));
+    const lab=(u.kind==="consolidate"?"C":"#"+(u.num??"?"))+(!u.has_result?(u.torn?" (torn)":" (running)"):(u.is_error?" error":" ok"));
     return `<i style="background:${ucol(u)}" title="${escapeHtml(lab)}"></i>`;
   }).join("");
+}
+
+// ── live transcript (streamed events from the running unit) ──
+function renderLive(a){
+  const host=$("live"), sub=$("live-sub"), tag=$("live-tag");
+  const lv=a&&a.live;
+  if(!lv||!lv.events||!lv.events.length){
+    tag.style.display="none";
+    host.innerHTML='<div class="muted">'+(lv&&lv.running
+      ?"unit starting… (no events streamed yet — units must run with --output-format stream-json)"
+      :"no stream yet — relaunch run_window.sh so units stream their transcript")+'</div>';
+    sub.innerHTML='thinking + each command/tool, streamed from the running <span class="mono">claude -p</span>';
+    return;
+  }
+  tag.style.display=lv.running?"":"none";
+  sub.textContent=(lv.kind==="consolidate"?"consolidate":"unit #"+(lv.num??"?"))
+    +" · "+lv.events.length+" recent events"+(lv.running?" · streaming":" · complete");
+  const pinned = host.scrollHeight - host.scrollTop - host.clientHeight < 48;  // follow newest unless scrolled up
+  host.innerHTML=lv.events.map(e=>{
+    if(e.kind==="thinking") return `<div class="e think"><span class="glyph">✻</span><span class="pre">${escapeHtml(e.text)}</span></div>`;
+    if(e.kind==="text")     return `<div class="e txt"><span class="glyph">▸</span><span class="pre">${escapeHtml(e.text)}</span></div>`;
+    if(e.kind==="tool")     return `<div class="e tool"><span class="glyph">⌘</span><span class="nm">${escapeHtml(e.name||"tool")}</span><span class="pre">${escapeHtml(e.cmd||"")}</span></div>`;
+    return `<div class="e res"><span class="pre">${escapeHtml(e.text)}</span></div>`;
+  }).join("");
+  if(pinned) host.scrollTop=host.scrollHeight;
 }
 
 // ── hardware contract summary ──
@@ -821,6 +866,7 @@ function renderBox(b){
   renderStripClock(b);
   renderWindow(b);
   renderAgent(b.agent);
+  renderLive(b.agent);
   renderHardware(b.hardware);
   renderQueue(b.queue);
   // research

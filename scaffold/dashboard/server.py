@@ -245,7 +245,90 @@ def _window(camp: dict, now: float) -> dict:
         "to_deadline_s": (deadline - now) if deadline else None,
     }
 
-_UNIT_RE = re.compile(r"^(unit|consolidate)_(\d+)(?:_(\d+))?\.json$")
+_UNIT_RE = re.compile(r"^(unit|consolidate)_(\d+)(?:_(\d+))?\.jsonl?$")  # .json (old) or .jsonl (stream)
+
+def _tail(path: str, nbytes: int) -> str:
+    """Read at most the last nbytes of a file, dropping a leading partial line if we seeked.
+    Lets us find the trailing result line / recent events in a large growing stream without
+    re-reading megabytes every poll."""
+    try:
+        sz = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if sz > nbytes:
+                f.seek(sz - nbytes)
+            data = f.read()
+        text = data.decode("utf-8", "ignore")
+        return text.split("\n", 1)[-1] if sz > nbytes else text
+    except OSError:
+        return ""
+
+def _jsonl(text: str) -> list[dict]:
+    """Parse JSONL, tolerating a torn trailing line (concurrent append)."""
+    out = []
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            out.append(json.loads(ln))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return out
+
+def _tool_brief(name, inp: dict) -> str:
+    """The command/target a tool_use is about — the 'commands' the agent is running."""
+    inp = inp or {}
+    if name == "Bash":
+        return inp.get("command", "")
+    if name in ("Read", "Edit", "Write", "NotebookEdit"):
+        return inp.get("file_path", "") or inp.get("notebook_path", "")
+    if name in ("Grep", "Glob"):
+        return inp.get("pattern", "")
+    if name == "Task":
+        return inp.get("description", "")
+    try:
+        return json.dumps(inp)
+    except (TypeError, ValueError):
+        return str(inp)
+
+def _result_text(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for b in content:
+            if isinstance(b, dict):
+                c = b.get("content", b.get("text", ""))
+                parts.append(c if isinstance(c, str) else json.dumps(c))
+            else:
+                parts.append(str(b))
+        return "\n".join(parts)
+    return ""
+
+def _unit_events(objs: list[dict], max_events: int = 80, max_chars: int = 700) -> list[dict]:
+    """Flatten stream-json into a renderable transcript: thinking / text / tool_use / tool_result."""
+    ev = []
+    for o in objs:
+        t = o.get("type")
+        if t == "assistant":
+            for b in (o.get("message", {}).get("content") or []):
+                if not isinstance(b, dict):
+                    continue
+                bt = b.get("type")
+                if bt == "thinking":
+                    ev.append({"kind": "thinking", "text": (b.get("thinking") or "")[:max_chars]})
+                elif bt == "text":
+                    txt = (b.get("text") or "").strip()
+                    if txt:
+                        ev.append({"kind": "text", "text": txt[:max_chars]})
+                elif bt == "tool_use":
+                    ev.append({"kind": "tool", "name": b.get("name"),
+                               "cmd": _tool_brief(b.get("name"), b.get("input"))[:max_chars]})
+        elif t == "user":
+            txt = _result_text(o.get("message", {}).get("content")).strip()
+            if txt:
+                ev.append({"kind": "result", "text": txt[:max_chars]})
+    return ev[-max_events:]
 
 def _agent(box: str, win_start) -> dict:
     """Live agent activity from the per-box driver log + per-unit `claude -p` JSON.
@@ -295,7 +378,10 @@ def _agent(box: str, win_start) -> dict:
     info["current_unit"] = maxunit or None
     info["driver_terminal"] = terminal
 
-    # ---- per-unit claude -p JSON results ----
+    # ---- per-unit claude -p output (JSONL stream, or legacy single-object json) ----
+    # A unit is COMPLETE once its file contains a {"type":"result"} line; until then it is
+    # in-flight (stream-json grows it live). Legacy single-object .json files are one result
+    # line, so they parse identically — backward compatible.
     try:
         files = sorted(os.listdir(rundir))
     except OSError:
@@ -310,42 +396,57 @@ def _agent(box: str, win_start) -> dict:
             sz = os.path.getsize(p)
         except OSError:
             continue
-        rec = {"name": fn, "kind": m.group(1), "epoch": int(m.group(2)),
+        rec = {"name": fn, "path": p, "kind": m.group(1), "epoch": int(m.group(2)),
                "num": int(m.group(3)) if m.group(3) else None,
-               "empty": sz == 0, "torn": False,
+               "empty": sz == 0, "torn": False, "has_result": False,
                "cost": None, "is_error": None, "duration_ms": None,
                "num_turns": None, "terminal_reason": None, "subtype": None}
         if sz > 0:
-            try:
-                j = json.loads(_read(p))
-                rec.update(cost=j.get("total_cost_usd"), is_error=j.get("is_error"),
-                           duration_ms=j.get("duration_ms"), num_turns=j.get("num_turns"),
-                           terminal_reason=j.get("terminal_reason"), subtype=j.get("subtype"))
-            except (json.JSONDecodeError, ValueError):
-                rec["torn"] = True  # tolerate a torn trailing write — skip its numbers
+            objs = _jsonl(_tail(p, 96_000))  # the result line is at the tail
+            result = next((o for o in reversed(objs) if o.get("type") == "result"), None)
+            if result:
+                rec["has_result"] = True
+                rec.update(cost=result.get("total_cost_usd"), is_error=result.get("is_error"),
+                           duration_ms=result.get("duration_ms"), num_turns=result.get("num_turns"),
+                           terminal_reason=result.get("terminal_reason") or result.get("stop_reason"),
+                           subtype=result.get("subtype"))
+            elif not objs:
+                rec["torn"] = True  # non-empty but nothing parseable yet
         recs.append(rec)
     recs.sort(key=lambda r: (r["epoch"], r["num"] or 0))
 
     win_start = win_start or 0
     for r in recs:
-        c = r.get("cost")
-        if c:
-            info["cost_all_usd"] += c
+        if r["cost"]:
+            info["cost_all_usd"] += r["cost"]
             if r["epoch"] >= win_start:
-                info["cost_window_usd"] += c
+                info["cost_window_usd"] += r["cost"]
     window_units = [r for r in recs if r["epoch"] >= win_start]
     info["units_launched"] = max(info["current_unit"] or 0, len(window_units))
-    info["units_completed"] = sum(1 for r in window_units if not r["empty"] and not r["torn"])
-    info["running"] = (terminal is None) and any(r["empty"] for r in window_units)
-    done = [r for r in recs if not r["empty"] and not r["torn"]]
+    info["units_completed"] = sum(1 for r in window_units if r["has_result"])
+    newest = recs[-1] if recs else None
+    in_flight = bool(newest and not newest["has_result"])
+    info["running"] = (terminal is None) and in_flight
+    done = [r for r in recs if r["has_result"]]
     if done:
         info["last_unit"] = {k: done[-1][k] for k in
                              ("name", "kind", "num", "epoch", "cost", "is_error",
                               "duration_ms", "num_turns", "terminal_reason", "subtype")}
     info["recent_units"] = [
         {k: r[k] for k in ("kind", "num", "epoch", "cost", "is_error",
-                           "duration_ms", "num_turns", "empty", "torn")}
+                           "duration_ms", "num_turns", "empty", "torn", "has_result")}
         for r in recs[-8:]]
+
+    # ---- live transcript: the newest unit's stream (in-flight if running, else last done) ----
+    if newest and not newest["empty"]:
+        objs = _jsonl(_tail(newest["path"], 300_000))
+        info["live"] = {"name": newest["name"], "kind": newest["kind"], "num": newest["num"],
+                        "running": in_flight, "events": _unit_events(objs)}
+    else:
+        info["live"] = {"name": (newest["name"] if newest else None),
+                        "num": (newest["num"] if newest else None),
+                        "running": bool(newest), "events": []}
+
     info["cost_window_usd"] = round(info["cost_window_usd"], 4)
     info["cost_all_usd"] = round(info["cost_all_usd"], 4)
     return info

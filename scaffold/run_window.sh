@@ -75,9 +75,15 @@ fi
 # ---- helper: build the box-injected prompt for `claude -p` ---------------------
 render() { sed "s|{{BOX}}|$BOX|g" "$1"; }
 
+# Units run with --output-format stream-json --verbose so the dashboard can render the
+# live transcript (thinking + each tool/SSH command + results) as the unit runs. Output is
+# JSONL that grows in real time; the final {"type":"result"} line carries the same summary
+# (total_cost_usd, is_error, num_turns) the single-blob `json` format used to emit.
+OUTFMT="--output-format stream-json --verbose"
+
 claude_cmd() {  # $1 = prompt file ; echoes the exact argv (for --dry-run + logging)
-  printf 'claude -p "<%s, {{BOX}}=%s>" --dangerously-skip-permissions --output-format json' \
-    "$(basename "$1")" "$BOX"
+  printf 'claude -p "<%s, {{BOX}}=%s>" --dangerously-skip-permissions %s' \
+    "$(basename "$1")" "$BOX" "$OUTFMT"
 }
 
 SENTINEL="$BOX/work/QUEUE_EMPTY"
@@ -122,15 +128,15 @@ while : ; do
   fi
   UNIT=$(( UNIT + 1 ))
   echo "run_window: $(date -Is) launch unit #$UNIT" | tee -a "$LOG"
-  render "$UNIT_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions --output-format json \
-    > "$LOGDIR/unit_$(date +%s)_$UNIT.json" 2>>"$LOG" \
+  render "$UNIT_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions $OUTFMT \
+    > "$LOGDIR/unit_$(date +%s)_$UNIT.jsonl" 2>>"$LOG" \
     || echo "run_window: $(date -Is) unit #$UNIT exited non-zero (logged; continuing)" | tee -a "$LOG"
 done
 
 # ---- consolidate ONCE, then exit ----------------------------------------------
 echo "run_window: $(date -Is) consolidate" | tee -a "$LOG"
-render "$CONSOLIDATE_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions --output-format json \
-  > "$LOGDIR/consolidate_$(date +%s).json" 2>>"$LOG" \
+render "$CONSOLIDATE_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions $OUTFMT \
+  > "$LOGDIR/consolidate_$(date +%s).jsonl" 2>>"$LOG" \
   || echo "run_window: $(date -Is) consolidate exited non-zero (logged)" | tee -a "$LOG"
 python3 -c "import json;p='$BOX/campaign.json';d=json.load(open(p));d['state']='completed';json.dump(d,open(p,'w'),indent=2)"
 rm -f "$SENTINEL"

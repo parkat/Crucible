@@ -153,7 +153,11 @@ Per box it shows, all from `boxes/<nick>/`:
   wind-down and the deadline, from `campaign.json`.
 - **Live agent activity** — current/last unit, units completed this window, cumulative
   `total_cost_usd`, and the `QUEUE_EMPTY` sentinel — parsed from the `run_window` driver log
-  and each unit's `claude -p` JSON.
+  and each unit's `claude -p` output.
+- **Live transcript** — the running unit's thinking + every tool/SSH command + results,
+  streamed as it happens. `run_window.sh` runs units with `--output-format stream-json`, so
+  each unit's `.jsonl` grows live and the dashboard tails it (host-side; the box is never
+  polled). The panel auto-follows the newest event unless you scroll up.
 - **Research progress** — the Pareto front, every measured model, the roofline gauge, the
   iteration timeline, and key findings, from `ledger.jsonl`.
 - **Queue** — the `[BOX]`/`[HOST]`/`[EITHER]`-tagged hypothesis queue from `MEMORY.md`, with
