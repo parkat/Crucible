@@ -8,10 +8,24 @@
 # If no C compiler is present, bandwidth is reported as null with a reason — that is a
 # logged "unknown, needs probe", NOT a failure (doctrine/02).
 #
-# Usage:  bash hardware_scan.sh  > hardware.json
+# Emits a COMPLETE contract: isa, topology, memory, storage, power_control{ipmitool,
+# wake_on_lan,wol_mac,wol_iface} (ethtool, root-only Wake-on flag via passwordless sudo),
+# and gpu{present,name,arch(sm_NN),vram_total_mib,driver,cuda_toolkit} (nvidia-smi). Every
+# detected field degrades to false/null when its tool is absent.
+#
+# RECONCILE (existing box): on a FIRST scan, write the output straight to hardware.json.
+# On a RE-scan of a box whose hardware.json has hand-curated fields (measured
+# bandwidth_gbps, bandwidth_reason, notes, gpu.history/note, power_control.recovery_note/
+# wol_helper, storage.free_gb), DEEP-MERGE this output UNDER the curated file — curated
+# wins on conflict — so detected values refresh but measurements/prose are never clobbered.
+#
+# Usage:  bash hardware_scan.sh  > hardware.json        # first scan
+#         bash hardware_scan.sh  > /tmp/scan.json       # re-scan, then deep-merge (above)
 set -u
 
 j_str() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+# emit a JSON string, or bare null when empty (for fields that degrade gracefully)
+j_or_null() { if [ -z "$1" ]; then printf 'null'; else printf '"%s"' "$(j_str "$1")"; fi; }
 
 # ---- ISA flags (presence/absence is what the ISA guard checks) ---------------
 FLAGS="$(grep -m1 '^flags' /proc/cpuinfo 2>/dev/null | cut -d: -f2-)"
@@ -57,6 +71,46 @@ case "$ROTA" in 0) STORAGE="ssd";; 1) STORAGE="hdd";; *) STORAGE="unknown";; esa
 
 # ---- power control available? (for watchdog recovery, doctrine/05) -----------
 HAS_IPMI=false; command -v ipmitool >/dev/null 2>&1 && HAS_IPMI=true
+
+# ---- Wake-on-LAN (so the resolver can wake a sleeping box, doctrine/05) -------
+# Magic-packet ("Wake-on: g") + the MAC/iface to target it. nulls if undetectable.
+WOL_ON=false; WOL_MAC=""; WOL_IFACE=""
+WOL_IFACE="$(ip route 2>/dev/null | awk '/^default/{print $5; exit}')"
+[ -z "$WOL_IFACE" ] && WOL_IFACE="$(ls /sys/class/net 2>/dev/null | grep -v '^lo$' | head -1)"
+if [ -n "$WOL_IFACE" ]; then
+  WOL_MAC="$(cat "/sys/class/net/$WOL_IFACE/address" 2>/dev/null)"
+  if command -v ethtool >/dev/null 2>&1; then
+    # The "Wake-on:" line is root-only; try passwordless sudo first (startup grants it),
+    # fall back to plain ethtool. The Supports line confirms the NIC can do magic-packet.
+    ETH="$(sudo -n ethtool "$WOL_IFACE" 2>/dev/null)"; [ -z "$ETH" ] && ETH="$(ethtool "$WOL_IFACE" 2>/dev/null)"
+    WOL_FLAG="$(printf '%s\n' "$ETH" | awk -F: '/^[[:space:]]*Wake-on:/{gsub(/ /,"",$2);print $2}' | tail -1)"
+    case "$WOL_FLAG" in *g*) WOL_ON=true;; esac   # 'g' = magic-packet wake armed
+  fi
+fi
+
+# ---- GPU (drives the build-cuda<NN> selection + the hybrid CPU/GPU budget) ----
+# nvidia-smi -> present/name/arch(sm_NN)/vram/driver/cuda. present:false if absent.
+GPU_PRESENT=false; GPU_NAME=""; GPU_ARCH=""; GPU_VRAM="null"; GPU_DRIVER=""; GPU_CUDA=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+  # compute_cap query needs a recent driver; fall back to name-only if it errors.
+  GLINE="$(nvidia-smi --query-gpu=name,memory.total,driver_version,compute_cap \
+            --format=csv,noheader,nounits 2>/dev/null | head -1)"
+  [ -z "$GLINE" ] && GLINE="$(nvidia-smi --query-gpu=name,memory.total,driver_version \
+            --format=csv,noheader,nounits 2>/dev/null | head -1)"
+  if [ -n "$GLINE" ]; then
+    GPU_PRESENT=true
+    GPU_NAME="$(printf '%s' "$GLINE"  | awk -F',' '{sub(/^ +/,"",$1);print $1}')"
+    GVRAM="$(printf '%s' "$GLINE"     | awk -F',' '{gsub(/ /,"",$2);print $2}')"
+    case "$GVRAM" in ''|*[!0-9]*) GPU_VRAM="null";; *) GPU_VRAM="$GVRAM";; esac
+    GPU_DRIVER="$(printf '%s' "$GLINE"| awk -F',' '{gsub(/ /,"",$3);print $3}')"
+    CC="$(printf '%s' "$GLINE"        | awk -F',' '{gsub(/ /,"",$4);print $4}')"   # e.g. 5.0
+    [ -n "$CC" ] && GPU_ARCH="sm_$(printf '%s' "$CC" | tr -d '.')"
+    # CUDA runtime version from the smi header, else nvcc if a toolkit is installed.
+    GPU_CUDA="$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: *\([0-9.]*\).*/\1/p' | head -1)"
+    [ -z "$GPU_CUDA" ] && command -v nvcc >/dev/null 2>&1 && \
+      GPU_CUDA="$(nvcc --version 2>/dev/null | awk '/release/{gsub(/,/,"",$5);print $5;exit}')"
+  fi
+fi
 
 # ---- MEASURED bandwidth: inline STREAM triad ---------------------------------
 BW_GBPS="null"; BW_REASON="\"not measured\""
@@ -130,7 +184,20 @@ cat << JEOF
     "channels_populated": "$(j_str "$CHANNELS_POP")"
   },
   "storage": { "root_device": "$(j_str "$ROOT_DEV")", "type": "$STORAGE" },
-  "power_control": { "ipmitool": $HAS_IPMI },
+  "power_control": {
+    "ipmitool": $HAS_IPMI,
+    "wake_on_lan": $WOL_ON,
+    "wol_mac": $(j_or_null "$WOL_MAC"),
+    "wol_iface": $(j_or_null "$WOL_IFACE")
+  },
+  "gpu": {
+    "present": $GPU_PRESENT,
+    "name": $(j_or_null "$GPU_NAME"),
+    "arch": $(j_or_null "$GPU_ARCH"),
+    "vram_total_mib": $GPU_VRAM,
+    "driver": $(j_or_null "$GPU_DRIVER"),
+    "cuda_toolkit": $(j_or_null "$GPU_CUDA")
+  },
   "bandwidth_gbps": $BW_GBPS,
   "bandwidth_reason": $BW_REASON,
   "notes": "bandwidth_gbps is the MEASURED effective BW for the roofline; null means needs-probe, not failure"
