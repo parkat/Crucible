@@ -38,22 +38,91 @@ dequant+dot-product hot path; it barely moves the decode ceiling because that ce
 is the DRAM bus. The two phases are optimized separately, always. This single fact
 dictates what is even worth searching — see `doctrine/03_PROPOSER_PLAYBOOK.md`.
 
-## How to start
+## Start fresh — one paste, one instruction
 
-Open `startup.md`, fill in the SSH details and pick an autonomy tier + campaign
-length, then tell the session:
+1. **Dump every `.md` (and the rest of the apparatus) flat into one folder.** Files may be
+   flat, mis-nested, or already structured — it does not matter.
+2. **Paste your creds** into the fill-in block in `startup.md` (target IP, SSH user/pass, a
+   nickname for the box; optional LAN model store). Pick an autonomy tier and a campaign length.
+3. Tell the Claude Code session:
 
-> follow startup.md
+   > follow startup.md
 
-The session establishes SSH, installs a key, grants itself sudo on the target, scans
-the hardware, scaffolds a per-box folder, and begins the campaign.
+That one flow now, end to end: **repairs the layout** (`preflight.py` rebuilds the canonical
+tree from the flat dump) → **installs a dedicated SSH key and discards the password** →
+**scans the hardware into a COMPLETE contract** (ISA, measured bandwidth, GPU `sm_NN`/VRAM,
+Wake-on-LAN) → **writes `connection.json`** → **scaffolds the box folder** (its own git repo) →
+**starts the dashboard** → **seeds `MEMORY.md`** with research + a takeable hypothesis queue →
+**launches the loop**. One paste, one instruction.
 
-To resume a campaign days later, point a fresh session at the box folder and say:
+## Run / resume the campaign
 
-> resume this campaign
+The research loop runs **outside** the session, in an external relauncher — so a dead or
+derailed session can never run the campaign off the rails. The loop lives on disk:
 
-It reconstructs its entire state from disk (`MEMORY.md` + `ledger.jsonl` + the clock).
-**The session is ephemeral; the campaign lives on disk.**
+```bash
+./scaffold/run_window.sh boxes/<nick>          # continue the current window as-is
+./scaffold/run_window.sh boxes/<nick> 24       # RE-ARM a fresh 24-hour window, then run
+./scaffold/run_window.sh boxes/<nick> --dry-run # preview the epoch math + the exact invocation
+```
+
+`hours` re-arms a fresh window (new start/deadline, same wind-down margin); omit it to
+continue the current one. Everything is read from the three contracts — nothing depends on
+prose or on a session's memory. **The session is ephemeral; the campaign lives on disk.**
+
+## Add a second box (fleet parallelism)
+
+Each box is driven by its own independent relauncher — run as many as you have hardware for:
+
+```bash
+# 1. paste creds for the new nickname into startup.md, then:  "follow startup.md"
+# 2. drive it (in its own terminal):
+./scaffold/run_window.sh boxes/<newnick> 24
+```
+
+Results compare across boxes via **roofline efficiency** (achieved ÷ ceiling), so a fast box
+and a slow box are judged on the same scale.
+
+## The contract trio + the resolver
+
+Nothing hardcodes how to reach or build on a box. Each box folder carries three contracts,
+and `scaffold/boxpaths.py` turns them into concrete commands:
+
+| contract | answers | lives at |
+|---|---|---|
+| `connection.json` | **how to reach** the box (host, user, key, remote paths) | `boxes/<nick>/` |
+| `hardware.json`   | **what the box is** (ISA, bandwidth, GPU, Wake-on-LAN) | `boxes/<nick>/` |
+| `campaign.json`   | **the current window** (start/deadline, thresholds, state) | `boxes/<nick>/` |
+
+```bash
+python3 scaffold/boxpaths.py boxes/<nick> --ssh        # the SSH prefix (append a remote command)
+python3 scaffold/boxpaths.py boxes/<nick> --build      # remote build bin dir (build-cuda<NN> if GPU)
+python3 scaffold/boxpaths.py boxes/<nick> --build --cpu # force the CPU build dir
+python3 scaffold/boxpaths.py boxes/<nick> --lock-path  # the target-side box lock
+python3 scaffold/boxpaths.py boxes/<nick> --wake       # wake a sleeping box (WoL / PowerShell helper)
+```
+
+Every loop prompt resolves the box through this tool, so the whole apparatus is
+host/target/hardware-agnostic: point it at a different box folder and every command
+re-resolves. (The password is **never** stored — it is used once at setup, then discarded.)
+
+## Loop behavior
+
+The relauncher launches one **bounded unit** at a time (`claude -p` with the box injected).
+Each unit does exactly ONE takeable queue item, gates it (KLD &lt; 0.02 for kernels; Tier-0 +
+chat template for instruct models), records to the ledger, leaves the queue's top takeable,
+and **stops**. The relauncher then decides whether to launch the next:
+
+```
+bounded units ──▶ wind-down (deadline − margin) ──▶ consolidate once ──▶ exit
+        └────────▶ queue empty (work/QUEUE_EMPTY sentinel) ──▶ consolidate ──▶ stop
+```
+
+`winddown_epoch = deadline − (deadline − start) × winddown_margin_frac`. **Wind-down ≠ stop:**
+units keep running until wind-down; only then does the session switch to consolidation-only
+(make `MEMORY.md` current, leave the queue clean + tagged + takeable-top, write the FINAL
+report). To resume later, just run `run_window.sh` again — it reconstructs state from disk
+(`MEMORY.md` + `ledger.jsonl` + the clock).
 
 ## Layout
 
@@ -71,7 +140,13 @@ crucible/
     06_OPERATIONS.md         the iteration loop, time discipline, resume protocol
   templates/             <- instantiated once per box
   scaffold/              <- runnable spine (ledger, scan, roofline, verifier, eval, dashboard)
+    boxpaths.py            the box resolver: contracts -> concrete ssh/build/lock/wake commands
+    run_window.sh          the external relauncher: owns the bounded-unit research loop
+    hardware_scan.sh       scans a box into a COMPLETE contract (ISA, BW, GPU, Wake-on-LAN)
+    prompts/               unit.md + consolidate.md (box-agnostic; injected per run)
   boxes/<nickname>/      <- created per target box; the live campaign state
+    connection.json        how to reach it   | hardware.json  what it is
+    campaign.json          the current window | MEMORY.md + ledger.jsonl  the brain + log
 ```
 
 ## Safety posture
