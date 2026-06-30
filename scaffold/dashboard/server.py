@@ -3,16 +3,25 @@
 crucible dashboard server — runs on the HOST (never the target).
 
 Zero third-party dependencies (stdlib http.server) so it runs on a minimal host. Serves
-the single-page UI and a /data endpoint that reads the box folder's ledger.jsonl,
-campaign.json, and MEMORY.md and returns the live campaign state as JSON. Read-only: it
-never writes to the campaign.
+the single-page UI and a /data endpoint that reads, for EACH box under the given path(s),
+the host-side artifacts the live campaign produces — campaign.json, hardware.json,
+ledger.jsonl, MEMORY.md, and the run_window driver log + per-unit `claude -p` JSON — and
+returns the live fleet state as JSON. Read-only: it NEVER writes to a campaign and NEVER
+touches the target box (host-side artifacts only).
+
+Fleet-ready: pass either a single box folder, several box folders, or the parent `boxes/`
+dir; the server enumerates every child that has a campaign.json and renders one panel per
+box.
 
 Usage:
     python3 scaffold/dashboard/server.py boxes/<nickname> [--port 8787]
+    python3 scaffold/dashboard/server.py boxes            # whole fleet
+    python3 scaffold/dashboard/server.py boxes/a boxes/b  # explicit set
 Then open http://localhost:8787/
 """
 from __future__ import annotations
 import argparse, json, os, re, sys, time
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -20,7 +29,7 @@ SCAFFOLD = os.path.dirname(HERE)
 sys.path.insert(0, SCAFFOLD)
 import ledger  # noqa: E402  (read-only use of the same front logic the agent writes)
 
-BOX = None  # set in main()
+BOXES: list[str] = []  # set in main()
 
 def _read(path: str) -> str:
     try:
@@ -29,26 +38,24 @@ def _read(path: str) -> str:
     except OSError:
         return ""
 
+def _read_json(path: str, default=None):
+    try:
+        return json.loads(_read(path) or "null")
+    except json.JSONDecodeError:
+        return default
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MEMORY.md section helpers (the queue + phase narrative live here)
+# ─────────────────────────────────────────────────────────────────────────────
 def _section(md: str, header: str) -> str:
     """Pull the body under a '## <header>' up to the next '## '. Robust to absence."""
-    m = re.search(rf"^##\s+{re.escape(header)}\s*$(.*?)(?=^##\s|\Z)", md,
+    m = re.search(rf"^##\s+{re.escape(header)}\b.*?$(.*?)(?=^##\s|\Z)", md,
                   re.MULTILINE | re.DOTALL)
     if not m:
         return ""
     body = m.group(1).strip()
-    # strip HTML comments and our template placeholders
     body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL).strip()
     return body
-
-def _hypotheses(md: str) -> list[str]:
-    body = _section(md, "Open hypotheses (prioritized queue)") or _section(md, "Open hypotheses")
-    out = []
-    for ln in body.splitlines():
-        ln = ln.strip()
-        m = re.match(r"^(?:\d+\.|[-*])\s+(.*)", ln)
-        if m and m.group(1):
-            out.append(m.group(1))
-    return out[:8]
 
 def _phase(md: str) -> dict:
     body = _section(md, "Current phase")
@@ -60,12 +67,74 @@ def _phase(md: str) -> dict:
             fields[m.group(1).strip().lower()] = m.group(2).strip()
     return fields
 
+_RES_TAGS = ("BOX", "HOST", "EITHER")
+
+def _queue_item(block: str, section: str) -> dict:
+    """Parse one top-level queue bullet into {id, title, tags, status, section}."""
+    text = re.sub(r"^[-*]\s+", "", block.strip())
+    status = None
+    m = re.match(r"^([✅❌◐◔◑◕✓✗])\s*", text)
+    if m:
+        status = m.group(1)
+        text = text[m.end():]
+    # the item id is the first bracket token that is NOT a resource tag (e.g. [K1], [LFM2-B])
+    bid = None
+    for mm in re.finditer(r"\[([^\]]+)\]", text):
+        if mm.group(1).strip().upper() not in _RES_TAGS:
+            bid = mm.group(1).strip()
+            break
+    tm = re.search(r"\*\*(.+?)\*\*", text, re.S)
+    title = tm.group(1) if tm else (text.splitlines() or [""])[0]
+    title = re.sub(r"\s+", " ", re.sub(r"[*`]", "", title)).strip()[:140]
+    tags = sorted({t.upper() for t in re.findall(r"\[(BOX|HOST|EITHER)\]", text, re.I)})
+    return {"id": bid, "title": title, "tags": tags, "status": status, "section": section}
+
+def _bullets(sec: str) -> list[str]:
+    """Top-level '- ' bullet blocks (indented sub-units stay attached to their parent)."""
+    blocks, cur = [], None
+    for ln in sec.splitlines():
+        if re.match(r"^[-*] ", ln):
+            if cur is not None:
+                blocks.append("\n".join(cur))
+            cur = [ln]
+        elif cur is not None:
+            cur.append(ln)
+    if cur is not None:
+        blocks.append("\n".join(cur))
+    return [b for b in blocks if b.strip()]
+
+def _queue(md: str) -> dict:
+    """The tagged hypothesis queue: open items (tagged), closed items, takeable-top id."""
+    body = _section(md, "Open hypotheses (prioritized queue)") or _section(md, "Open hypotheses")
+    out = {"open": [], "closed": [], "takeable_id": None}
+    if not body:
+        return out
+    parts = re.split(r"^###\s+(.*)$", body, flags=re.MULTILINE)
+    # parts = [pre, head1, body1, head2, body2, ...]; ignore the pre-amble
+    it = iter(parts[1:])
+    for head, sec in zip(it, it):
+        head = head.strip()
+        up = head.upper()
+        is_closed = "CLOSED" in up or "DONE" in up
+        is_takeable = "TAKEABLE" in up
+        for idx, blk in enumerate(_bullets(sec)):
+            item = _queue_item(blk, head)
+            if is_closed:
+                out["closed"].append(item)
+            else:
+                out["open"].append(item)
+                if is_takeable and idx == 0 and out["takeable_id"] is None:
+                    out["takeable_id"] = item["id"] or item["title"]
+    return out
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ledger → models table + findings (carried over from the single-box dashboard)
+# ─────────────────────────────────────────────────────────────────────────────
 _QUANT_SUFFIX = re.compile(r"[-_](Q\d[_A-Za-z0-9]*|IQ\d[_A-Za-z0-9]*|TQ\d[_A-Za-z0-9]*|f16|bf16|fp16)$", re.I)
 
 def _norm_model(name: str) -> str:
-    """Collapse a model id to its family by stripping a trailing quant token."""
     n = name or "?"
-    for _ in range(2):  # strip up to two trailing quant tokens (e.g. ...-Instruct-Q4_0)
+    for _ in range(2):
         n2 = _QUANT_SUFFIX.sub("", n)
         if n2 == n:
             break
@@ -80,13 +149,12 @@ def _is_gpu(cfg: dict) -> bool:
     return bool(ngl) and ngl not in (0, "0")
 
 def _models_table(recs: list[dict]) -> list[dict]:
-    """One row per (model-family, quant): merge speed (CPU+GPU) and quality across records."""
     groups: dict[tuple, dict] = {}
     for r in recs:
         cfg = r.get("config") or {}
         raw = cfg.get("model")
         if not raw:
-            continue  # finding/experiment record with no model — skip here
+            continue
         model = _norm_model(raw)
         quant = cfg.get("quant", "") or ""
         key = (model, quant)
@@ -116,9 +184,7 @@ def _models_table(recs: list[dict]) -> list[dict]:
                 g[f] = v
     rows = list(groups.values())
     for g in rows:
-        # a single sortable speed: best decode seen (gpu preferred, else cpu)
         g["best_decode"] = g["gpu_decode"] if g["gpu_decode"] is not None else g["cpu_decode"]
-        # quality display: Elo if present, else objective composite (0..100) from math/code
         if g["quality"] is not None:
             g["quality_kind"] = "elo"
             g["quality_score"] = g["quality"]
@@ -130,7 +196,6 @@ def _models_table(recs: list[dict]) -> list[dict]:
         else:
             g["quality_kind"] = None
             g["quality_score"] = None
-        # status precedence for the badge
         order = ["blessed", "contender", "degenerate", "couldnt_load", "failed"]
         g["status"] = next((s for s in order if s in g["statuses"]), (g["statuses"] or [None])[0])
     rows.sort(key=lambda g: (g["best_decode"] is None, -(g["best_decode"] or 0)))
@@ -140,7 +205,6 @@ _FIND_RE = re.compile(r"\b(NOVEL|KEY FINDING|VERDICT|DEFINITIVE|SYNTHESIS|HEADLI
                       r"CONFIRMED|NEGATIVE|ANTIDOTE|CONTRIBUTION|TEED UP)\b")
 
 def _findings(recs: list[dict]) -> list[dict]:
-    """Surface the marked discoveries (blessed records + notes flagged with caps markers)."""
     out = []
     for r in recs:
         notes = r.get("notes", "") or ""
@@ -148,7 +212,6 @@ def _findings(recs: list[dict]) -> list[dict]:
         if r.get("status") == "blessed" or mark:
             cfg = r.get("config") or {}
             title = cfg.get("finding") or cfg.get("experiment") or cfg.get("model") or "finding"
-            # first sentence of the note as the lede
             lede = re.split(r"(?<=[.)])\s", notes.strip(), maxsplit=1)[0][:240]
             out.append({"id": r.get("id"), "status": r.get("status"),
                         "tag": (mark.group(1) if mark else "BLESSED"),
@@ -156,17 +219,171 @@ def _findings(recs: list[dict]) -> list[dict]:
     out.sort(key=lambda f: -(f["epoch"] or 0))
     return out[:12]
 
-def build_data() -> dict:
-    camp = {}
-    try:
-        camp = json.loads(_read(os.path.join(BOX, "campaign.json")) or "{}")
-    except json.JSONDecodeError:
-        pass
-    recs = ledger.load(os.path.join(BOX, "ledger.jsonl"))
-    front = ledger.pareto_front(recs)
-    md = _read(os.path.join(BOX, "MEMORY.md"))
+# ─────────────────────────────────────────────────────────────────────────────
+# window phase + live agent activity (the run_window driver writes these host-side)
+# ─────────────────────────────────────────────────────────────────────────────
+def _window(camp: dict, now: float) -> dict:
+    start = camp.get("start_epoch") or 0
+    deadline = camp.get("deadline_epoch") or 0
+    margin = camp.get("winddown_margin_frac")
+    margin = 0.10 if margin is None else margin
+    winddown = int(deadline - (deadline - start) * margin) if deadline else 0
+    state = camp.get("state") or "running"
+    if state in ("completed", "done") or (deadline and now >= deadline):
+        phase = "done"
+    elif winddown and now >= winddown:
+        phase = "winddown"
+    else:
+        phase = "running"
+    return {
+        "phase": phase,
+        "state": state,
+        "start_epoch": start or None,
+        "deadline_epoch": deadline or None,
+        "winddown_epoch": winddown or None,
+        "to_winddown_s": (winddown - now) if winddown else None,
+        "to_deadline_s": (deadline - now) if deadline else None,
+    }
 
-    now = time.time()
+_UNIT_RE = re.compile(r"^(unit|consolidate)_(\d+)(?:_(\d+))?\.json$")
+
+def _agent(box: str, win_start) -> dict:
+    """Live agent activity from the per-box driver log + per-unit `claude -p` JSON.
+
+    Tolerant of concurrent writes: a 0-byte file = a unit launched but not yet finished;
+    a non-JSON body = a torn trailing write. Neither crashes the panel.
+    """
+    work = os.path.join(box, "work")
+    logp = os.path.join(work, "run_window.log")
+    rundir = os.path.join(work, "run_window")
+    sentinel = os.path.join(work, "QUEUE_EMPTY")
+    info = {
+        "log_present": os.path.exists(logp),
+        "queue_empty": os.path.exists(sentinel),
+        "current_window_line": None,
+        "current_unit": None,
+        "driver_terminal": None,
+        "running": False,
+        "units_launched": 0,
+        "units_completed": 0,
+        "cost_window_usd": 0.0,
+        "cost_all_usd": 0.0,
+        "last_unit": None,
+        "recent_units": [],
+    }
+
+    # ---- driver log: isolate the current window (everything after the last START) ----
+    lines = [ln for ln in _read(logp).splitlines() if ln.strip()]
+    start_idx = None
+    for i, ln in enumerate(lines):
+        if " START box=" in ln:
+            start_idx = i
+    window_lines = lines[start_idx:] if start_idx is not None else []
+    maxunit, terminal = 0, None
+    for ln in window_lines:
+        m = re.search(r"launch unit #(\d+)", ln)
+        if m:
+            maxunit = max(maxunit, int(m.group(1)))
+        if "WINDDOWN reached" in ln:
+            terminal = "winddown"
+        elif "QUEUE_EMPTY sentinel" in ln:
+            terminal = "queue_empty"
+        elif " DONE box=" in ln:
+            terminal = "done"
+    if window_lines:
+        info["current_window_line"] = window_lines[0].strip()
+    info["current_unit"] = maxunit or None
+    info["driver_terminal"] = terminal
+
+    # ---- per-unit claude -p JSON results ----
+    try:
+        files = sorted(os.listdir(rundir))
+    except OSError:
+        files = []
+    recs = []
+    for fn in files:
+        m = _UNIT_RE.match(fn)
+        if not m:
+            continue
+        p = os.path.join(rundir, fn)
+        try:
+            sz = os.path.getsize(p)
+        except OSError:
+            continue
+        rec = {"name": fn, "kind": m.group(1), "epoch": int(m.group(2)),
+               "num": int(m.group(3)) if m.group(3) else None,
+               "empty": sz == 0, "torn": False,
+               "cost": None, "is_error": None, "duration_ms": None,
+               "num_turns": None, "terminal_reason": None, "subtype": None}
+        if sz > 0:
+            try:
+                j = json.loads(_read(p))
+                rec.update(cost=j.get("total_cost_usd"), is_error=j.get("is_error"),
+                           duration_ms=j.get("duration_ms"), num_turns=j.get("num_turns"),
+                           terminal_reason=j.get("terminal_reason"), subtype=j.get("subtype"))
+            except (json.JSONDecodeError, ValueError):
+                rec["torn"] = True  # tolerate a torn trailing write — skip its numbers
+        recs.append(rec)
+    recs.sort(key=lambda r: (r["epoch"], r["num"] or 0))
+
+    win_start = win_start or 0
+    for r in recs:
+        c = r.get("cost")
+        if c:
+            info["cost_all_usd"] += c
+            if r["epoch"] >= win_start:
+                info["cost_window_usd"] += c
+    window_units = [r for r in recs if r["epoch"] >= win_start]
+    info["units_launched"] = max(info["current_unit"] or 0, len(window_units))
+    info["units_completed"] = sum(1 for r in window_units if not r["empty"] and not r["torn"])
+    info["running"] = (terminal is None) and any(r["empty"] for r in window_units)
+    done = [r for r in recs if not r["empty"] and not r["torn"]]
+    if done:
+        info["last_unit"] = {k: done[-1][k] for k in
+                             ("name", "kind", "num", "epoch", "cost", "is_error",
+                              "duration_ms", "num_turns", "terminal_reason", "subtype")}
+    info["recent_units"] = [
+        {k: r[k] for k in ("kind", "num", "epoch", "cost", "is_error",
+                           "duration_ms", "num_turns", "empty", "torn")}
+        for r in recs[-8:]]
+    info["cost_window_usd"] = round(info["cost_window_usd"], 4)
+    info["cost_all_usd"] = round(info["cost_all_usd"], 4)
+    return info
+
+# ─────────────────────────────────────────────────────────────────────────────
+# hardware contract summary (the roofline denominator + ISA/GPU/RAM)
+# ─────────────────────────────────────────────────────────────────────────────
+def _hardware(box: str) -> dict:
+    hw = _read_json(os.path.join(box, "hardware.json"), {}) or {}
+    isa = hw.get("isa") or {}
+    topo = hw.get("topology") or {}
+    mem = hw.get("memory") or {}
+    gpu = hw.get("gpu") or {}
+    total = mem.get("total_bytes")
+    return {
+        "bandwidth_gbps": hw.get("bandwidth_gbps"),
+        "bandwidth_reason": hw.get("bandwidth_reason"),
+        "isa": [k.upper() for k, v in isa.items() if v],
+        "cpu": hw.get("model_name"),
+        "arch": hw.get("arch"),
+        "cores": topo.get("nproc"),
+        "ram_gb": round(total / 1e9, 1) if total else None,
+        "ram_speed": mem.get("dimm_speed"),
+        "gpu": (gpu.get("name") if gpu.get("present") else None),
+        "gpu_arch": gpu.get("arch"),
+        "vram_mib": gpu.get("vram_total_mib"),
+    }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# per-box payload
+# ─────────────────────────────────────────────────────────────────────────────
+def build_box(box: str, now: float) -> dict:
+    camp = _read_json(os.path.join(box, "campaign.json"), {}) or {}
+    recs = ledger.load(os.path.join(box, "ledger.jsonl"))
+    front = ledger.pareto_front(recs)
+    md = _read(os.path.join(box, "MEMORY.md"))
+    win = _window(camp, now)
+
     deadline = camp.get("deadline_epoch")
     remaining = (deadline - now) if deadline else None
 
@@ -175,29 +392,21 @@ def build_data() -> dict:
         if not vals:
             return None
         winner = max(front, key=lambda r: r.get(key) or -1)
-        return {"value": max(vals), "config": winner.get("config", {}),
-                "id": winner.get("id")}
+        return {"value": max(vals), "config": winner.get("config", {}), "id": winner.get("id")}
 
-    # status tallies for the timeline strip
-    from collections import Counter
     tally = Counter(r.get("status") for r in recs)
-
-    # the "current best" decode config carries the roofline gauge
     top = max(front, key=lambda r: r.get("decode_tok_s") or -1) if front else None
-
-    # optional measured depth-curve dataset (the headline finding), read if present
-    depth = None
-    try:
-        depth = json.loads(_read(os.path.join(BOX, "depth.json")) or "null")
-    except json.JSONDecodeError:
-        depth = None
-
-    models = _models_table(recs)
-    findings = _findings(recs)
+    depth = _read_json(os.path.join(box, "depth.json"), None)
+    nick = camp.get("nickname") or os.path.basename(box.rstrip("/"))
 
     return {
-        "now": now,
+        "nick": nick,
+        "box_dir": os.path.basename(box.rstrip("/")),
         "campaign": camp,
+        "window": win,
+        "agent": _agent(box, win.get("start_epoch")),
+        "queue": _queue(md),
+        "hardware": _hardware(box),
         "remaining_s": remaining,
         "counts": dict(tally),
         "n_records": len(recs),
@@ -230,13 +439,42 @@ def build_data() -> dict:
             "model": (top.get("config") or {}).get("model", "?"),
         },
         "phase": _phase(md),
-        "hypotheses": _hypotheses(md),
         "memory_present": bool(md),
-        "models": models,
-        "findings": findings,
+        "models": _models_table(recs),
+        "findings": _findings(recs),
         "depth": depth,
         "windows": camp.get("prior_windows", []),
     }
+
+def build_data() -> dict:
+    now = time.time()
+    boxes = []
+    for b in BOXES:
+        try:
+            boxes.append(build_box(b, now))
+        except Exception as e:  # one bad box must not blank the whole fleet
+            boxes.append({"nick": os.path.basename(b.rstrip("/")),
+                          "box_dir": os.path.basename(b.rstrip("/")), "error": str(e)})
+    return {"now": now, "boxes": boxes}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# box discovery
+# ─────────────────────────────────────────────────────────────────────────────
+def discover_boxes(path: str) -> list[str]:
+    """A path is either a box (has campaign.json) or a parent dir of boxes. Enumerate."""
+    path = os.path.abspath(path)
+    if os.path.isfile(os.path.join(path, "campaign.json")):
+        return [path]
+    out = []
+    try:
+        for name in sorted(os.listdir(path)):
+            d = os.path.join(path, name)
+            if os.path.isdir(d) and os.path.isfile(os.path.join(d, "campaign.json")):
+                out.append(d)
+    except OSError:
+        pass
+    return out
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -263,18 +501,25 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
-    global BOX
-    ap = argparse.ArgumentParser()
-    ap.add_argument("box", help="path to boxes/<nickname>")
+    global BOXES
+    ap = argparse.ArgumentParser(description="crucible fleet dashboard (host-side, read-only)")
+    ap.add_argument("paths", nargs="+",
+                    help="box folder(s) and/or the parent boxes/ dir to enumerate")
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--host", default="127.0.0.1")
     a = ap.parse_args()
-    BOX = os.path.abspath(a.box)
-    if not os.path.isdir(BOX):
-        print(f"[dashboard] box folder not found: {BOX}", file=sys.stderr)
+    seen, BOXES = set(), []
+    for p in a.paths:
+        for b in discover_boxes(p):
+            if b not in seen:
+                seen.add(b)
+                BOXES.append(b)
+    if not BOXES:
+        print(f"[dashboard] no boxes (campaign.json) found under: {a.paths}", file=sys.stderr)
         return 2
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
-    print(f"[dashboard] serving {BOX}\n[dashboard] open http://{a.host}:{a.port}/", flush=True)
+    print(f"[dashboard] fleet: {', '.join(os.path.basename(b) for b in BOXES)}")
+    print(f"[dashboard] open http://{a.host}:{a.port}/", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
