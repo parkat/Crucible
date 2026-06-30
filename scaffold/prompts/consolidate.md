@@ -34,6 +34,10 @@ SSH="$(python3 scaffold/boxpaths.py "$BOX" --ssh)"    # only if you must confirm
    (`[BOX]`/`[HOST]`/`[EITHER]`); the **top is a single small takeable item** so the next
    window starts instantly. Carry forward open hypotheses with their locate-and-redirect
    residuals.
+   - **Drain `STEERING.md`.** Leave its Inbox **empty** so the next window starts clean: any
+     still-unprocessed operator note that remains viable → carry into the MEMORY.md queue
+     (tagged, takeable) and move it to **Picked up** (`→ carried to queue`); dead ones → move
+     to **Dropped** with a reason. Keep the Picked up / Dropped history intact.
 3. **Final report.** Write `"$BOX/reports/FINAL_$(date +%F)_window.md"`: the Pareto front and
    blessed configs, the roofline findings, what was ruled out **and what each negative
    localized the bottleneck to**, and the open hypotheses for next window. Cite ledger ids.

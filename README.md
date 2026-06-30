@@ -143,6 +143,36 @@ units keep running until wind-down; only then does the session switch to consoli
 report). To resume later, just run `run_window.sh` again — it reconstructs state from disk
 (`MEMORY.md` + `ledger.jsonl` + the clock).
 
+## Steering a live campaign (from your phone)
+
+Read something in AI-research news and want the campaign to chase a front **you** found? Drop a
+note in the box's **`STEERING.md`** inbox — the worker reads it at the **start of every unit**
+and treats each Inbox note as a top-priority hypothesis: it folds the note into the queue
+(splitting to a takeable item if large), pursues it ahead of the stale queue top, then **moves
+the note out of the Inbox the same unit** — to **Picked up** (with what it queued/measured) or
+**Dropped** (with a reason if it isn't viable). The Inbox only ever holds notes not yet acted
+on, so stale steering can never re-poison a later research round.
+
+Add a note with the helper (well-formed, safe to run from anywhere):
+
+```bash
+python3 scaffold/steer.py boxes/<nick> "look into Mamba-2 SSD CPU-decode kernels" --tag HOST --research
+python3 scaffold/steer.py boxes/<nick> "try IQ2_XXS on the 70B" --tag BOX
+python3 scaffold/steer.py boxes/<nick> --list      # what's still pending
+```
+
+`--tag BOX|HOST|EITHER` hints the resource; `--research` asks for a web-research phase rather
+than a bench; `--note "…"` adds context. You can also hand-edit `STEERING.md` directly — the
+helper just keeps the format clean. The worker commits `STEERING.md` with each unit, so picked-up
+and dropped notes are a permanent audit trail in the box's repo.
+
+**The phone workflow:** keep a Claude Code session open on the crucible host and reach it with
+remote control from your phone. Tell it "steer `<nick>` toward X" and it runs `steer.py` (or edits
+`STEERING.md`); then watch the dashboard's **Operator steering** panel flip your note from
+*pending* to *picked up / dropped* once the next unit consumes it — confirmation, from your
+pocket, that the campaign heard you. Adding a note never interrupts a unit mid-flight; it lands
+at the next Orient.
+
 ## Watch it live — the dashboard
 
 A read-only, auto-refreshing monitor runs on the **host** (it never polls the target — that
@@ -173,7 +203,14 @@ Per box it shows, all from `boxes/<nick>/`:
   stall-triggered web-research unit, with when it ran.
 - **Queue** — the `[BOX]`/`[HOST]`/`[EITHER]`-tagged hypothesis queue from `MEMORY.md`, with
   the takeable-top item highlighted and closed items listed.
+- **Operator steering** — your `STEERING.md` inbox: notes you injected that are still *pending*,
+  plus the recently *picked up* / *dropped* ones — so a glance from your phone confirms a steer
+  landed and what became of it.
 - **Hardware contract** — measured STREAM bandwidth (the roofline denominator), ISA, GPU, RAM.
+- **Window concluded** — once a run ends, the sealed `MEMORY.md` is rendered in full as the
+  document the window leaves behind (appears only when the campaign has wound down).
+- **Hype board** — the agent's own findings, bragged about, synthesized live from the ledger.
+  Purely for morale.
 
 The fleet bar at the top shows one card per box (phase, countdowns, units, cost); click a card
 to focus its detail panels.

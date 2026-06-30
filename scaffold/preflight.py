@@ -37,6 +37,7 @@ MANIFEST: dict[str, tuple[str, str | None]] = {
     "scaffold/ledger.py":                      ("critical", "crucible ledger"),
     "scaffold/boxpaths.py":                    ("critical", "crucible boxpaths"),
     "scaffold/run_window.sh":                  ("critical", "crucible run_window.sh"),
+    "scaffold/steer.py":                       ("critical", "crucible steer.py"),
     "scaffold/prompts/unit.md":                ("critical", "CRUCIBLE — UNIT PROMPT"),
     "scaffold/prompts/consolidate.md":         ("critical", "CRUCIBLE — CONSOLIDATE PROMPT"),
     "scaffold/hardware_scan.sh":               ("critical", "crucible hardware_scan.sh"),
@@ -49,6 +50,7 @@ MANIFEST: dict[str, tuple[str, str | None]] = {
     "templates/MEMORY.template.md":            ("critical", "MEMORY — <NICKNAME>"),
     "templates/campaign.template.json":        ("critical", "winddown_margin_frac"),
     "templates/GATE_QUEUE.template.md":        ("critical", "GATE QUEUE"),
+    "templates/STEERING.template.md":          ("critical", "operator-injected research directions"),
     "templates/gitignore":                     ("critical", "Secrets — NEVER commit"),
     # seeds — regenerable from doctrine if absent
     "scaffold/eval/assets/README.md":          ("seed", "Frozen eval assets"),

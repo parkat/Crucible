@@ -110,6 +110,8 @@ render_research() {
 ‼ FRONT STALLED — RESEARCH UNIT (injected by run_window.sh: the Pareto front has not improved
 in >= ${FRONT_STALL_K} measured records). For THIS unit ONLY, run a web-research phase per
 doctrine/03 instead of taking the stale queue top:
+  - FIRST fold in any operator notes from "${BOX}/STEERING.md" (Inbox) and empty them per the
+    steering invariant — a human-pointed front outranks an automated search direction;
   - search the CURRENT ($(date +%Y)) landscape for AVX-less / bandwidth-bound CPU inference,
     new architectures (SSM/RWKV/Mamba & successors), relevant engine forks, and recent papers;
   - write findings into "${BOX}/MEMORY.md" and refresh its dated landscape snapshot;

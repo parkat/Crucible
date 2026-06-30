@@ -127,6 +127,49 @@ def _queue(md: str) -> dict:
                     out["takeable_id"] = item["id"] or item["title"]
     return out
 
+def _steering(box: str) -> dict:
+    """Operator steering inbox (STEERING.md): pending notes + recently consumed.
+
+    The worker reads STEERING.md at each unit's Orient, acts on the top Inbox note, and moves
+    every consumed note out of the Inbox (-> Picked up / Dropped). So `pending` is exactly what
+    the human has queued that the worker has not yet touched — the thing to glance at from a
+    phone to confirm a steer was received and what became of it."""
+    md = _read(os.path.join(box, "STEERING.md"))
+    if not md.strip():
+        return {"present": False, "pending": [], "recent": [], "picked_n": 0, "dropped_n": 0}
+
+    def _items(header: str) -> list[dict]:
+        out = []
+        for blk in _bullets(_section(md, header)):
+            text = re.sub(r"^[-*]\s+", "", blk.strip())
+            head = text.split("\n", 1)[0]
+            cont = " ".join(l.strip() for l in text.split("\n")[1:] if l.strip())
+            tsm = re.match(r"\[([^\]]+)\]\s*", head)
+            ts = tsm.group(1) if tsm else None
+            if tsm:
+                head = head[tsm.end():]
+            tagm = re.search(r"\[(BOX|HOST|EITHER)\]", head, re.I)
+            tag = tagm.group(1).upper() if tagm else None
+            research = bool(re.search(r"\(research\)", head, re.I))
+            tm = re.search(r"\*\*(.+?)\*\*", head, re.S)
+            title = tm.group(1) if tm else head
+            title = re.sub(r"\s+", " ", re.sub(r"[*`]", "", title)).strip()[:160]
+            rm = re.search(r"(?:→|->)\s*(.+)$", head)          # the "→ what the worker did" tail
+            note = (rm.group(1).strip() if rm else cont) or None
+            out.append({"ts": ts, "tag": tag, "research": research,
+                        "title": title, "note": (note[:160] if note else None)})
+        return out
+
+    picked, dropped = _items("Picked up"), _items("Dropped")
+    return {
+        "present": True,
+        "pending": _items("Inbox"),
+        "picked_n": len(picked),
+        "dropped_n": len(dropped),
+        "recent": ([{**p, "state": "picked"} for p in picked[:4]]
+                   + [{**d, "state": "dropped"} for d in dropped[:4]]),
+    }
+
 # ─────────────────────────────────────────────────────────────────────────────
 # ledger → models table + findings (carried over from the single-box dashboard)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -572,6 +615,7 @@ def build_box(box: str, now: float) -> dict:
         "window": win,
         "agent": _agent(box, win.get("start_epoch")),
         "queue": _queue(md),
+        "steering": _steering(box),
         "hardware": _hardware(box),
         "remaining_s": remaining,
         "counts": dict(tally),

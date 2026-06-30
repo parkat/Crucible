@@ -33,7 +33,33 @@ $SSH 'uptime'
    not have launched you.)
 2. Read `"$BOX/MEMORY.md"` (the brain transplant) and `python3 scaffold/ledger.py tail
    "$BOX/ledger.jsonl" 15` + `... front "$BOX/ledger.jsonl"` (the live Pareto front).
-3. Skim `doctrine/` if anything is unclear; `00_PRIME_DIRECTIVE.md` governs novel calls.
+3. Read `"$BOX/STEERING.md"` if it exists — the operator's inbox of human-injected research
+   directions (a front the human found and wants pursued). See the next section.
+4. Skim `doctrine/` if anything is unclear; `00_PRIME_DIRECTIVE.md` governs novel calls.
+
+## Operator steering preempts the queue (consume the inbox, then empty it)
+
+If `"$BOX/STEERING.md"` has any notes under **`## Inbox (unprocessed)`**, the human has pointed
+you at a front they found. Inbox notes **OUTRANK** the MEMORY.md queue. For THIS unit, take the
+**top Inbox note** as your one item (instead of the queue top):
+
+- **Viable** → fold it into MEMORY.md's queue as the takeable top (split to a small takeable
+  item if it's large), and pursue it. If the note is tagged `(research)`, spend this unit on a
+  web-research phase per `doctrine/03` (no benching) rather than measuring.
+- **Not viable** (off-target, already ruled out, impossible on this hardware) → drop it with a
+  one-line reason. You are allowed to reject a human note — say why.
+
+**STEERING INVARIANT — empty what you consume.** Every Inbox note you act on or reject MUST be
+**moved out of the Inbox in this unit's commit**, never left behind and never silently deleted:
+
+- acted on → append under **`## Picked up`**: `- [<ts>] **<note>** → queued as [ID] / ledger <id>`
+- rejected → append under **`## Dropped`**: `- [<ts>] **<note>** → not viable: <one-line reason>`
+
+Act on only the **top** note this unit (one bounded item); any other Inbox notes stay pending
+for later units. After this unit the Inbox holds only notes you have **not yet touched** — so
+stale steering can never re-poison a later research round. Commit `STEERING.md` with the rest.
+
+If the Inbox is empty, ignore all of this and take the queue top as usual:
 
 ## Pick exactly ONE item — the takeable top of the queue
 

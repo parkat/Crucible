@@ -272,6 +272,26 @@
   .md strong{color:var(--ink); font-weight:600}
   .md a{color:var(--cyan)}
 
+  /* ── operator steering inbox (human-injected research directions) ── */
+  #steer-panel h2 .stag{margin-left:8px; font-size:8px; letter-spacing:.14em; padding:1px 6px; border-radius:2px; border:1px solid var(--hair); color:var(--ink-faint)}
+  #steer-panel h2 .stag.pending{color:#0d1110; background:var(--amber); border-color:#4a3a1e}
+  .steer-list{list-style:none; margin:0; padding:0}
+  .steer-list li{position:relative; padding:8px 0; border-bottom:1px solid var(--hair)}
+  .steer-list li:last-child{border-bottom:0}
+  .steer-head{display:flex; align-items:center; gap:7px; flex-wrap:wrap}
+  .steer-ts{font-family:var(--mono); font-size:10px; color:var(--ink-faint)}
+  .steer-rsrch{font-family:var(--mono); font-size:8px; letter-spacing:.08em; padding:1px 5px; border-radius:2px; border:1px solid #2c4742; color:var(--cyan)}
+  .steer-ttl{font-size:13px; color:var(--ink); margin-top:3px; line-height:1.35}
+  .steer-note{font-family:var(--mono); font-size:11px; color:var(--ink-faint); margin-top:2px}
+  .steer-empty{color:var(--ink-faint); font-family:var(--mono); font-size:11px}
+  .steer-recent{margin-top:12px; border-top:1px solid var(--grid); padding-top:8px}
+  .steer-recent .rk{font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:5px}
+  .steer-recent .ri{font-family:var(--mono); font-size:11px; padding:3px 0; display:flex; gap:7px; align-items:baseline}
+  .steer-recent .ri .mk{flex:0 0 auto; font-size:9px; letter-spacing:.06em; text-transform:uppercase; padding:0 5px; border-radius:2px}
+  .steer-recent .ri .mk.picked{color:var(--cyan); border:1px solid #2c4742}
+  .steer-recent .ri .mk.dropped{color:var(--oxblood); border:1px solid #5a2f26}
+  .steer-recent .ri .rt{color:var(--ink-dim); word-break:break-word}
+
   /* ── current activity: live task + started timestamp ── */
   .act-task{border:1px solid var(--grid); border-radius:2px; background:var(--well); padding:9px 11px; margin-bottom:9px}
   .act-task .at-row{display:flex; align-items:center; gap:9px}
@@ -350,6 +370,18 @@
       <h2>Hardware contract</h2>
       <div class="sub">measured STREAM bandwidth = the roofline denominator</div>
       <div class="hw" id="hw"><div class="muted">no hardware.json</div></div>
+    </div>
+  </div>
+
+  <!-- operator steering: human-injected research directions (edit from your phone) -->
+  <div class="panel" id="steer-panel" style="display:none">
+    <h2>Operator steering<span class="stag" id="steer-tag">clear</span></h2>
+    <div class="sub">notes you inject (<span class="mono">scaffold/steer.py</span> or edit STEERING.md) · picked up at the next unit's Orient · consumed notes move to picked / dropped</div>
+    <ul class="steer-list" id="steer-pending"></ul>
+    <div class="steer-empty" id="steer-empty" style="display:none">inbox clear — no pending steering. add one: <span class="mono">python3 scaffold/steer.py &lt;box&gt; "look into X"</span></div>
+    <div class="steer-recent" id="steer-recent-wrap" style="display:none">
+      <div class="rk">recently consumed</div>
+      <div id="steer-recent"></div>
     </div>
   </div>
 
@@ -869,6 +901,40 @@ function renderConclusion(b){
     +" · the document this run leaves behind";
 }
 
+// ── operator steering inbox (human-injected research directions) ──
+function renderSteering(b){
+  const panel=$("steer-panel");
+  const s=b&&b.steering;
+  if(!s||!s.present){ panel.style.display="none"; return; }
+  panel.style.display="";
+  const pend=s.pending||[];
+  const tag=$("steer-tag");
+  tag.textContent=pend.length?(pend.length+" pending"):"clear";
+  tag.className="stag"+(pend.length?" pending":"");
+  const ul=$("steer-pending"), empty=$("steer-empty");
+  if(!pend.length){ ul.innerHTML=""; empty.style.display=""; }
+  else{
+    empty.style.display="none";
+    ul.innerHTML=pend.map(it=>`<li>
+      <div class="steer-head">
+        ${it.ts?`<span class="steer-ts">${escapeHtml(it.ts)}</span>`:""}
+        ${it.tag?`<span class="tag ${it.tag}">${escapeHtml(it.tag)}</span>`:""}
+        ${it.research?'<span class="steer-rsrch">research</span>':""}
+      </div>
+      <div class="steer-ttl">${escapeHtml(it.title)}</div>
+      ${it.note?`<div class="steer-note">${escapeHtml(it.note)}</div>`:""}
+    </li>`).join("");
+  }
+  const rc=s.recent||[], wrap=$("steer-recent-wrap");
+  if(rc.length){
+    wrap.style.display="";
+    $("steer-recent").innerHTML=rc.map(r=>
+      `<div class="ri"><span class="mk ${r.state}">${escapeHtml(r.state)}</span>`
+      +`<span class="rt">${escapeHtml(r.title)}${r.note?(' <span class="dim">→ '+escapeHtml(r.note)+'</span>'):""}</span></div>`
+    ).join("");
+  } else wrap.style.display="none";
+}
+
 // ── hype board: the agent flexing on its own ledger ──
 // Pure client-side: every line is synthesized from data already in the /data payload
 // (best-per-axis, roofline, status counts, findings, window units/cost). No server change.
@@ -1128,6 +1194,7 @@ function renderBox(b){
   renderLive(b.agent);
   renderHardware(b.hardware);
   renderQueue(b.queue);
+  renderSteering(b);
   renderConclusion(b);
   // research
   drawPlot(b.front||[]);
