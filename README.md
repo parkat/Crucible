@@ -38,6 +38,17 @@ dequant+dot-product hot path; it barely moves the decode ceiling because that ce
 is the DRAM bus. The two phases are optimized separately, always. This single fact
 dictates what is even worth searching — see `doctrine/03_PROPOSER_PLAYBOOK.md`.
 
+## Requirements
+
+- **Host** (where the Claude Code session runs — never the target): `python3` (≥3.10, stdlib
+  only — the dashboard has zero third-party deps), `git`, `ssh`/`ssh-keygen`, and `sshpass`
+  (installed once to seed the key). The host drives everything and serves the dashboard.
+- **Target** (the disposable salvage box): reachable over SSH with a sudo-capable user. Nothing
+  is pre-installed — the agent builds the engine on the target itself. The box may be asleep;
+  if `hardware.json` records Wake-on-LAN, the resolver can wake it.
+- **Models**: fetched over the internet as needed, or staged on a LAN store (`LAN_MODEL_STORE`
+  in `startup.md`) to avoid re-downloading.
+
 ## Start fresh — one paste, one instruction
 
 1. **Dump every `.md` (and the rest of the apparatus) flat into one folder.** Files may be
@@ -124,6 +135,34 @@ units keep running until wind-down; only then does the session switch to consoli
 report). To resume later, just run `run_window.sh` again — it reconstructs state from disk
 (`MEMORY.md` + `ledger.jsonl` + the clock).
 
+## Watch it live — the dashboard
+
+A read-only, auto-refreshing monitor runs on the **host** (it never polls the target — that
+would perturb the very numbers the campaign measures). It renders entirely from host-side
+artifacts and tolerates files being appended to mid-read.
+
+```bash
+python3 scaffold/dashboard/server.py boxes/<nick>     # one box
+python3 scaffold/dashboard/server.py boxes            # the whole fleet (one panel per box)
+# then open the printed http://127.0.0.1:8787/   (override with --port / --host)
+```
+
+Per box it shows, all from `boxes/<nick>/`:
+
+- **Window status** — phase (`running` / `winddown` / `done`) with live countdowns to both
+  wind-down and the deadline, from `campaign.json`.
+- **Live agent activity** — current/last unit, units completed this window, cumulative
+  `total_cost_usd`, and the `QUEUE_EMPTY` sentinel — parsed from the `run_window` driver log
+  and each unit's `claude -p` JSON.
+- **Research progress** — the Pareto front, every measured model, the roofline gauge, the
+  iteration timeline, and key findings, from `ledger.jsonl`.
+- **Queue** — the `[BOX]`/`[HOST]`/`[EITHER]`-tagged hypothesis queue from `MEMORY.md`, with
+  the takeable-top item highlighted and closed items listed.
+- **Hardware contract** — measured STREAM bandwidth (the roofline denominator), ISA, GPU, RAM.
+
+The fleet bar at the top shows one card per box (phase, countdowns, units, cost); click a card
+to focus its detail panels.
+
 ## Layout
 
 ```
@@ -144,6 +183,8 @@ crucible/
     run_window.sh          the external relauncher: owns the bounded-unit research loop
     hardware_scan.sh       scans a box into a COMPLETE contract (ISA, BW, GPU, Wake-on-LAN)
     prompts/               unit.md + consolidate.md (box-agnostic; injected per run)
+    dashboard/             host-side live monitor (server.py + index.html; fleet-aware)
+    ledger.py roofline.py correctness.py verify.py eval/   <- scoring + the frozen eval funnel
   boxes/<nickname>/      <- created per target box; the live campaign state
     connection.json        how to reach it   | hardware.json  what it is
     campaign.json          the current window | MEMORY.md + ledger.jsonl  the brain + log
