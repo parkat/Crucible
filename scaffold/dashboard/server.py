@@ -362,11 +362,15 @@ def _agent(box: str, win_start) -> dict:
         if " START box=" in ln:
             start_idx = i
     window_lines = lines[start_idx:] if start_idx is not None else []
-    maxunit, terminal = 0, None
+    maxunit, terminal, cur_research, research_units = 0, None, False, 0
     for ln in window_lines:
         m = re.search(r"launch unit #(\d+)", ln)
         if m:
-            maxunit = max(maxunit, int(m.group(1)))
+            n, is_r = int(m.group(1)), ("RESEARCH" in ln)
+            if is_r:
+                research_units += 1
+            if n >= maxunit:
+                maxunit, cur_research = n, is_r
         if "WINDDOWN reached" in ln:
             terminal = "winddown"
         elif "QUEUE_EMPTY sentinel" in ln:
@@ -376,6 +380,8 @@ def _agent(box: str, win_start) -> dict:
     if window_lines:
         info["current_window_line"] = window_lines[0].strip()
     info["current_unit"] = maxunit or None
+    info["current_is_research"] = cur_research
+    info["research_units"] = research_units
     info["driver_terminal"] = terminal
 
     # ---- per-unit claude -p output (JSONL stream, or legacy single-object json) ----

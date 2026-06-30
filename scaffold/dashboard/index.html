@@ -762,9 +762,9 @@ function renderAgent(a){
   const kv=(k,v,cls)=>rows.push(`<div class="kv"><div class="k">${k}</div><div class="val ${cls||""}">${v}</div></div>`);
   const stateTxt = a.queue_empty ? "QUEUE_EMPTY → consolidating"
                  : a.driver_terminal ? ("winddown→consolidate ("+a.driver_terminal+")")
-                 : a.running ? `unit #${a.current_unit||"?"} running…` : "between units";
-  kv("status", escapeHtml(stateTxt), a.running?"":"dim");
-  kv("units · win", `${a.units_completed||0} done / ${a.units_launched||0} launched`);
+                 : a.running ? `${a.current_is_research?"🔎 research ":""}unit #${a.current_unit||"?"} running…` : "between units";
+  kv("status", (a.running&&a.current_is_research?'<span style="color:var(--cyan)">'+escapeHtml(stateTxt)+'</span>':escapeHtml(stateTxt)), a.running?"":"dim");
+  kv("units · win", `${a.units_completed||0} done / ${a.units_launched||0} launched${a.research_units?` · <span style="color:var(--cyan)">${a.research_units} research</span>`:""}`);
   kv("cost · win", `$${(a.cost_window_usd||0).toFixed(4)} <span class="dim">(all $${(a.cost_all_usd||0).toFixed(2)})</span>`);
   kv("sentinel", a.queue_empty?'<span style="color:var(--amber)">QUEUE_EMPTY present</span>':'<span class="dim">none</span>');
   if(lu){

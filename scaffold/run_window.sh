@@ -63,7 +63,7 @@ PY
 fi
 
 # ---- read the window ----------------------------------------------------------
-read -r START DEADLINE MARGIN < <(python3 -c "import json;d=json.load(open('$BOX/campaign.json'));print(d.get('start_epoch') or 0, d.get('deadline_epoch') or 0, d.get('winddown_margin_frac') if d.get('winddown_margin_frac') is not None else 0.10)")
+read -r START DEADLINE MARGIN FRONT_STALL_K < <(python3 -c "import json;d=json.load(open('$BOX/campaign.json'));print(d.get('start_epoch') or 0, d.get('deadline_epoch') or 0, d.get('winddown_margin_frac') if d.get('winddown_margin_frac') is not None else 0.10, d.get('front_stall_K') or 0)")
 
 if [ "${DEADLINE:-0}" -eq 0 ]; then
   # open-ended campaign: no deadline -> never auto-winddown; QUEUE_EMPTY still ends it.
@@ -74,6 +74,53 @@ fi
 
 # ---- helper: build the box-injected prompt for `claude -p` ---------------------
 render() { sed "s|{{BOX}}|$BOX|g" "$1"; }
+
+# ---- stall trigger: turn doctrine/03's "research whenever the front stalls" into real
+#      automation. front_stalled() echoes 1 when the Pareto front has not gained ground in
+#      >= FRONT_STALL_K *measured* records (research/finding rows don't count, so a research
+#      unit can't keep re-triggering itself). Anything unexpected -> 0 (never wedge the loop).
+front_stalled() {
+  [ "${FRONT_STALL_K:-0}" -gt 0 ] || { echo 0; return; }
+  python3 - "$BOX/ledger.jsonl" "$FRONT_STALL_K" <<'PY'
+import sys
+sys.path.insert(0, "scaffold")
+try:
+    import ledger
+    path, K = sys.argv[1], int(sys.argv[2])
+    recs = ledger.load(path)
+    front = ledger.pareto_front(recs)
+    if not front:
+        print(0); raise SystemExit          # no front yet -> still building, not stalled
+    fids = {id(f) for f in front}
+    last = max((i for i, r in enumerate(recs) if id(r) in fids), default=-1)
+    since = sum(1 for r in recs[last + 1:]
+                if r.get("decode_tok_s") is not None or r.get("prefill_tok_s") is not None)
+    print(1 if since >= K else 0)
+except SystemExit:
+    raise
+except Exception:
+    print(0)
+PY
+}
+
+# When stalled, the next unit is spent on a web-research phase instead of grinding the stale
+# queue: prepend a directive, then the standard unit contract (for gating/recording/resolver).
+render_research() {
+  cat <<EOF
+‼ FRONT STALLED — RESEARCH UNIT (injected by run_window.sh: the Pareto front has not improved
+in >= ${FRONT_STALL_K} measured records). For THIS unit ONLY, run a web-research phase per
+doctrine/03 instead of taking the stale queue top:
+  - search the CURRENT ($(date +%Y)) landscape for AVX-less / bandwidth-bound CPU inference,
+    new architectures (SSM/RWKV/Mamba & successors), relevant engine forks, and recent papers;
+  - write findings into "${BOX}/MEMORY.md" and refresh its dated landscape snapshot;
+  - push 1–3 NEW small, takeable, resource-tagged ([BOX]/[HOST]/[EITHER]) hypotheses to the TOP
+    of the queue so the next units have fresh directions;
+  - log a research record to the ledger. Do NOT bench on this unit. Then STOP.
+
+--- the standard unit contract follows (format, gating, recording, resolver use) ---
+EOF
+  render "$1"
+}
 
 # Units run with --output-format stream-json --verbose so the dashboard can render the
 # live transcript (thinking + each tool/SSH command + results) as the unit runs. Output is
@@ -115,7 +162,7 @@ command -v claude >/dev/null 2>&1 || { echo "run_window: 'claude' CLI not on PAT
 mkdir -p "$LOGDIR"
 echo "run_window: $(date -Is) START box=$BOX winddown=$WINDDOWN deadline=$DEADLINE" >> "$LOG"
 
-UNIT=0
+UNIT=0; LAST_RESEARCH=0
 while : ; do
   NOW="$(date +%s)"
   if [ "$WINDDOWN" -ne 0 ] && [ "$NOW" -ge "$WINDDOWN" ]; then
@@ -127,10 +174,21 @@ while : ; do
     break
   fi
   UNIT=$(( UNIT + 1 ))
-  echo "run_window: $(date -Is) launch unit #$UNIT" | tee -a "$LOG"
-  render "$UNIT_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions $OUTFMT \
-    > "$LOGDIR/unit_$(date +%s)_$UNIT.jsonl" 2>>"$LOG" \
-    || echo "run_window: $(date -Is) unit #$UNIT exited non-zero (logged; continuing)" | tee -a "$LOG"
+  # stall trigger: spend this unit on research when the front has stalled — but never two in a
+  # row, so the research output gets a normal unit to act on it before we research again.
+  if [ "$LAST_RESEARCH" -eq 0 ] && [ "$(front_stalled)" = "1" ]; then
+    echo "run_window: $(date -Is) launch unit #$UNIT [RESEARCH — front stalled >= $FRONT_STALL_K measured records]" | tee -a "$LOG"
+    render_research "$UNIT_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions $OUTFMT \
+      > "$LOGDIR/unit_$(date +%s)_$UNIT.jsonl" 2>>"$LOG" \
+      || echo "run_window: $(date -Is) unit #$UNIT (research) exited non-zero (logged; continuing)" | tee -a "$LOG"
+    LAST_RESEARCH=1
+  else
+    echo "run_window: $(date -Is) launch unit #$UNIT" | tee -a "$LOG"
+    render "$UNIT_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions $OUTFMT \
+      > "$LOGDIR/unit_$(date +%s)_$UNIT.jsonl" 2>>"$LOG" \
+      || echo "run_window: $(date -Is) unit #$UNIT exited non-zero (logged; continuing)" | tee -a "$LOG"
+    LAST_RESEARCH=0
+  fi
 done
 
 # ---- consolidate ONCE, then exit ----------------------------------------------
