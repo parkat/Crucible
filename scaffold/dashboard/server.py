@@ -28,8 +28,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCAFFOLD = os.path.dirname(HERE)
 sys.path.insert(0, SCAFFOLD)
 import ledger  # noqa: E402  (read-only use of the same front logic the agent writes)
+sys.path.insert(0, HERE)
+try:
+    import report_pdf  # sibling: FINAL_*.md -> PDF, generated lazily on request
+except Exception:
+    report_pdf = None
 
 BOXES: list[str] = []  # set in main()
+
+# a report filename is always FINAL_<...>.<md|pdf|html> — no slashes, no traversal
+_REPORT_NAME_RE = re.compile(r"^FINAL_[A-Za-z0-9_.\-]+\.(md|pdf|html)$")
 
 def _read(path: str) -> str:
     try:
@@ -586,6 +594,36 @@ def _conclusion(box: str, md: str, win: dict) -> dict:
         "report_name": report,
     }
 
+def _reports(box: str) -> list[dict]:
+    """Every FINAL_*.md in the box's reports/ dir, newest first, with whether a PDF exists.
+
+    The dashboard links each to /report/<box_dir>/<stem>.pdf; the server renders the PDF
+    lazily on first open (report_pdf) if it isn't there yet. `pdf_ready` lets the panel show
+    'generates on open' for reports not yet rendered."""
+    rd = os.path.join(box, "reports")
+    out = []
+    try:
+        mds = sorted((fn for fn in os.listdir(rd) if re.match(r"FINAL_.*\.md$", fn)), reverse=True)
+    except OSError:
+        return out
+    for idx, md in enumerate(mds):
+        stem = md[:-3]
+        try:
+            st = os.stat(os.path.join(rd, md))
+            mtime, size_kb = st.st_mtime, round(st.st_size / 1024, 1)
+        except OSError:
+            mtime, size_kb = None, None
+        m = re.search(r"(\d{4}-\d{2}-\d{2})", stem)
+        pdf_ready = os.path.isfile(os.path.join(rd, stem + ".pdf"))
+        out.append({
+            "stem": stem, "md": md, "pdf": stem + ".pdf",
+            "html": (stem + ".html") if os.path.isfile(os.path.join(rd, stem + ".html")) else None,
+            "date": m.group(1) if m else None,
+            "pdf_ready": pdf_ready, "mtime": mtime, "size_kb": size_kb,
+            "is_latest": idx == 0,
+        })
+    return out
+
 def build_box(box: str, now: float) -> dict:
     camp = _read_json(os.path.join(box, "campaign.json"), {}) or {}
     recs = ledger.load(os.path.join(box, "ledger.jsonl"))
@@ -651,6 +689,7 @@ def build_box(box: str, now: float) -> dict:
         "phase": _phase(md),
         "memory_present": bool(md),
         "conclusion": _conclusion(box, md, win),
+        "reports": _reports(box),
         "models": _models_table(recs),
         "findings": _findings(recs),
         "depth": depth,
@@ -699,12 +738,70 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body if isinstance(body, bytes) else body.encode("utf-8"))
 
+    def _send_file(self, data: bytes, ctype: str, filename: str):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f'inline; filename="{filename}"')
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _serve_report(self):
+        """GET /report/<box_dir>/<FINAL_*.pdf|md|html> — serve a report file (PDF inline).
+
+        A requested .pdf that doesn't exist yet is rendered on the fly from the sibling .md;
+        if no PDF engine is available it falls back to the styled .html. Strictly sandboxed to
+        each box's reports/ dir (validated name + realpath containment)."""
+        from urllib.parse import urlparse, unquote
+        parts = [unquote(p) for p in urlparse(self.path).path.split("/") if p]
+        if len(parts) != 3:                      # ["report", box_dir, filename]
+            return self._send(404, "not found", "text/plain")
+        _, box_dir, fname = parts
+        if not _REPORT_NAME_RE.match(fname):
+            return self._send(404, "bad report name", "text/plain")
+        box = {os.path.basename(b.rstrip("/")): b for b in BOXES}.get(box_dir)
+        if not box:
+            return self._send(404, "unknown box", "text/plain")
+        rd = os.path.realpath(os.path.join(box, "reports"))
+        target = os.path.realpath(os.path.join(rd, fname))
+        if target != rd and not target.startswith(rd + os.sep):   # traversal guard
+            return self._send(404, "not found", "text/plain")
+        ext = fname.rsplit(".", 1)[-1].lower()
+        if ext == "pdf" and not os.path.isfile(target) and report_pdf is not None:
+            md = os.path.join(rd, fname[:-4] + ".md")             # lazy render from the .md
+            if os.path.isfile(md):
+                try:
+                    report_pdf.ensure_pdf(md)
+                except Exception:
+                    pass
+            if not os.path.isfile(target):                        # engine missing -> html fallback
+                alt = target[:-4] + ".html"
+                if os.path.isfile(alt):
+                    target, ext = alt, "html"
+        if not os.path.isfile(target):
+            return self._send(404, "report not available", "text/plain")
+        ctype = {"pdf": "application/pdf",
+                 "html": "text/html; charset=utf-8",
+                 "md": "text/markdown; charset=utf-8"}.get(ext, "application/octet-stream")
+        try:
+            with open(target, "rb") as f:
+                data = f.read()
+        except OSError:
+            return self._send(404, "not found", "text/plain")
+        self._send_file(data, ctype, os.path.basename(target))
+
     def do_GET(self):
         if self.path.startswith("/data"):
             try:
                 self._send(200, json.dumps(build_data()), "application/json")
             except Exception as e:  # never 500 the panel; show the error in-band
                 self._send(200, json.dumps({"error": str(e)}), "application/json")
+        elif self.path.startswith("/report/"):
+            try:
+                self._serve_report()
+            except Exception as e:
+                self._send(500, "report error: " + str(e), "text/plain")
         elif self.path in ("/", "/index.html"):
             self._send(200, _read(os.path.join(HERE, "index.html")), "text/html; charset=utf-8")
         else:

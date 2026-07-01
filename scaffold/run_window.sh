@@ -124,6 +124,54 @@ EOF
   render "$1"
 }
 
+# ---- session-limit backoff -----------------------------------------------------
+# A hit Claude session/usage limit comes back as a ~1s, $0 no-op unit whose result line is
+# is_error=true with a "…limit… resets <time>" message. Tight-relaunching then burns hundreds
+# of no-op units against the cap (and wastes the window). limit_sleep_secs() inspects a just-
+# written unit file and echoes how many seconds to sleep until the reset (0 = not a limit hit,
+# so a real unit is never mistaken for one). Parses "resets 6pm"/"resets 6:30am"; falls back to
+# 15m if the time is unparseable; clamps to [30s, 6h] so a mis-parse can never wedge the loop.
+limit_sleep_secs() {  # $1 = unit output file ; echoes seconds to sleep (0 if not a limit hit)
+  python3 - "$1" <<'PY'
+import sys, json, re, datetime
+try:
+    last = None
+    with open(sys.argv[1], encoding="utf-8", errors="ignore") as f:
+        for ln in f:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                o = json.loads(ln)
+            except Exception:
+                continue
+            if o.get("type") == "result":
+                last = o
+    if not last or not last.get("is_error"):
+        print(0); raise SystemExit
+    msg = last.get("result") or ""
+    if "limit" not in msg.lower():
+        print(0); raise SystemExit
+    now = datetime.datetime.now().astimezone()
+    m = re.search(r"resets?\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)", msg, re.I)
+    if m:
+        hh = int(m.group(1)) % 12
+        if m.group(3).lower() == "pm":
+            hh += 12
+        target = now.replace(hour=hh, minute=int(m.group(2) or 0), second=0, microsecond=0)
+        if target <= now:
+            target += datetime.timedelta(days=1)
+        secs = int((target - now).total_seconds()) + 20   # small buffer past the reset
+    else:
+        secs = 900                                        # unparseable -> 15 min
+    print(max(30, min(secs, 6 * 3600)))
+except SystemExit:
+    raise
+except Exception:
+    print(0)                                              # never wedge the loop
+PY
+}
+
 # Units run with --output-format stream-json --verbose so the dashboard can render the
 # live transcript (thinking + each tool/SSH command + results) as the unit runs. Output is
 # JSONL that grows in real time; the final {"type":"result"} line carries the same summary
@@ -176,21 +224,33 @@ while : ; do
     break
   fi
   UNIT=$(( UNIT + 1 ))
+  UNIT_FILE="$LOGDIR/unit_$(date +%s)_$UNIT.jsonl"
   # stall trigger: spend this unit on research when the front has stalled — but never two in a
   # row, so the research output gets a normal unit to act on it before we research again.
   if [ "$LAST_RESEARCH" -eq 0 ] && [ "$(front_stalled)" = "1" ]; then
+    THIS_RESEARCH=1
     echo "run_window: $(date -Is) launch unit #$UNIT [RESEARCH — front stalled >= $FRONT_STALL_K measured records]" | tee -a "$LOG"
     render_research "$UNIT_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions $OUTFMT \
-      > "$LOGDIR/unit_$(date +%s)_$UNIT.jsonl" 2>>"$LOG" \
+      > "$UNIT_FILE" 2>>"$LOG" \
       || echo "run_window: $(date -Is) unit #$UNIT (research) exited non-zero (logged; continuing)" | tee -a "$LOG"
-    LAST_RESEARCH=1
   else
+    THIS_RESEARCH=0
     echo "run_window: $(date -Is) launch unit #$UNIT" | tee -a "$LOG"
     render "$UNIT_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions $OUTFMT \
-      > "$LOGDIR/unit_$(date +%s)_$UNIT.jsonl" 2>>"$LOG" \
+      > "$UNIT_FILE" 2>>"$LOG" \
       || echo "run_window: $(date -Is) unit #$UNIT exited non-zero (logged; continuing)" | tee -a "$LOG"
-    LAST_RESEARCH=0
   fi
+  # session-limit backoff: if this unit was a limit no-op, drop it (don't count it, don't flip
+  # the research flag) and sleep until the reset instead of tight-relaunching against the cap.
+  SLEEP="$(limit_sleep_secs "$UNIT_FILE")"
+  if [ "${SLEEP:-0}" -gt 0 ]; then
+    echo "run_window: $(date -Is) SESSION LIMIT on unit #$UNIT -> back off ${SLEEP}s (until reset); no-op dropped, not counted" | tee -a "$LOG"
+    rm -f "$UNIT_FILE"
+    UNIT=$(( UNIT - 1 ))
+    sleep "$SLEEP"
+    continue
+  fi
+  LAST_RESEARCH=$THIS_RESEARCH
 done
 
 # ---- consolidate ONCE, then exit ----------------------------------------------
@@ -200,4 +260,6 @@ render "$CONSOLIDATE_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions
   || echo "run_window: $(date -Is) consolidate exited non-zero (logged)" | tee -a "$LOG"
 python3 -c "import json;p='$BOX/campaign.json';d=json.load(open(p));d['state']='completed';json.dump(d,open(p,'w'),indent=2)"
 rm -f "$SENTINEL"
+# render the just-sealed FINAL_*.md report(s) to PDF so the dashboard panel is ready immediately
+python3 scaffold/dashboard/report_pdf.py "$BOX" >/dev/null 2>&1 || true
 echo "run_window: $(date -Is) DONE box=$BOX units=$UNIT" | tee -a "$LOG"
