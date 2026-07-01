@@ -25,3 +25,11 @@ _tb/
 # Python / scratch
 __pycache__/
 *.pyc
+
+# Dashboard redesign — keep only BRIEF.md (docs); rest is scratch / box-state dumps
+scaffold/dashboard/redesign/sample-data.json
+scaffold/dashboard/redesign/index.baseline.html
+scaffold/dashboard/redesign/index.html
+scaffold/dashboard/redesign/*.png
+scaffold/dashboard/redesign/_*
+scaffold/dashboard/*.bak
