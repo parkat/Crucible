@@ -98,15 +98,21 @@ def _queue_item(block: str, section: str) -> dict:
     return {"id": bid, "title": title, "tags": tags, "status": status, "section": section}
 
 def _bullets(sec: str) -> list[str]:
-    """Top-level '- ' bullet blocks (indented sub-units stay attached to their parent)."""
+    """Top-level '- ' bullet blocks (indented sub-units stay attached to their parent).
+
+    Also recognizes BLOCKQUOTED bullets ('> - ...'): the live queue top is often written as
+    blockquote prose under '### TAKEABLE NOW', and without stripping the '>' the parser skips it
+    and locks onto stale plain bullets deeper in the (unpruned) section — surfacing a days-old
+    'top'. (dashboard queue-parse bug, found on the Precision390 live window.)"""
     blocks, cur = [], None
     for ln in sec.splitlines():
-        if re.match(r"^[-*] ", ln):
+        s = re.sub(r"^\s*>+\s?", "", ln)   # strip a leading blockquote marker, if any
+        if re.match(r"^[-*] ", s):
             if cur is not None:
                 blocks.append("\n".join(cur))
-            cur = [ln]
+            cur = [s]
         elif cur is not None:
-            cur.append(ln)
+            cur.append(s)
     if cur is not None:
         blocks.append("\n".join(cur))
     return [b for b in blocks if b.strip()]
