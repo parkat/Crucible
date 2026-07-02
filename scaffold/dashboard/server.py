@@ -129,17 +129,36 @@ def _queue(md: str) -> dict:
     for head, sec in zip(it, it):
         head = head.strip()
         up = head.upper()
-        is_closed = "CLOSED" in up or "DONE" in up
+        section_closed = "CLOSED" in up or "DONE" in up
         is_takeable = "TAKEABLE" in up
-        for idx, blk in enumerate(_bullets(sec)):
+        for blk in _bullets(sec):
             item = _queue_item(blk, head)
-            if is_closed:
+            # Classify done PER ITEM, not just by section head: most items are marked "[Kxx] DONE"
+            # inside the '### TAKEABLE NOW' prose, so a header-only rule miscounts them as open.
+            item_done = item.get("status") in ("✅", "❌", "✓", "✗") or \
+                bool(re.search(r"\b(DONE|CLOSED|NO-GO|SUBSUMED|DEPRECATED)\b|DEAD END", blk.upper()))
+            if section_closed or item_done:
                 out["closed"].append(item)
             else:
                 out["open"].append(item)
-                if is_takeable and idx == 0 and out["takeable_id"] is None:
+                if is_takeable and out["takeable_id"] is None:
                     out["takeable_id"] = item["id"] or item["title"]
+    # De-dup by id and resolve conflicts: an id that is OPEN (e.g. the live takeable top) must not
+    # also appear in closed — block-merged prose can pull a stray 'DONE' into a live item's block.
+    open_ids = {i["id"] for i in out["open"] if i["id"]}
+    out["closed"] = _dedup_items(i for i in out["closed"] if not (i["id"] and i["id"] in open_ids))
+    out["open"] = _dedup_items(out["open"])
     return out
+
+def _dedup_items(items) -> list[dict]:
+    seen, keep = set(), []
+    for i in items:
+        k = i["id"] or i["title"]
+        if k in seen:
+            continue
+        seen.add(k)
+        keep.append(i)
+    return keep
 
 def _steering(box: str) -> dict:
     """Operator steering inbox (STEERING.md): pending notes + recently consumed.
