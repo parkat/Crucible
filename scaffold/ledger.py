@@ -12,6 +12,7 @@ CLI:
     python3 ledger.py front  boxes/<nick>/ledger.jsonl     # print non-dominated set
     python3 ledger.py tail   boxes/<nick>/ledger.jsonl 10  # last N records
     python3 ledger.py stats  boxes/<nick>/ledger.jsonl     # counts by status
+    python3 ledger.py record boxes/<nick>/ledger.jsonl --json '{...}'  # append one row (or stdin)
 """
 from __future__ import annotations
 import json, os, sys, time, uuid
@@ -105,20 +106,36 @@ def load(ledger_path: str) -> list[dict]:
 
 
 # ---- Pareto front ------------------------------------------------------------
-# Objectives (doctrine/01): maximize decode_tok_s, maximize prefill_tok_s, maximize
-# quality. (TTFT is carried with prefill; perf/watt and RSS are context, not axes.)
-# Degenerate/failed/couldnt_load are excluded from the front.
-_OBJ = ("decode_tok_s", "prefill_tok_s", "quality")
+# Objectives (doctrine/01): maximize decode_tok_s, maximize prefill_tok_s, and maximize a
+# CROSS-MODEL-VALID quality coordinate. (TTFT is carried with prefill; perf/watt and RSS are
+# context, not axes.) Degenerate/failed/couldnt_load are excluded from the front.
+#
+# GATED (doctrine/04 eval-kernel change — see GATE_PROPOSALS.md bug A): the quality axis MUST be
+# comparable across tokenizers. Doctrine 01/02 mandate BPB for exactly this reason, so we rank on
+# -bpb (lower bpb = better) whenever bpb is present. The raw `quality` scalar (in the optiplex5050
+# run it was 100/ppl) is NOT cross-model-comparable and is used only as a single-model fallback
+# when bpb is absent.
+_PERF = ("decode_tok_s", "prefill_tok_s")
+
+def _quality_coord(r: dict) -> Optional[float]:
+    bpb = r.get("bpb")
+    if bpb is not None:
+        return -bpb                      # lower bpb is better -> negate so "higher = better"
+    return r.get("quality")              # single-model fallback only (NOT cross-model valid)
+
+def _objs(r: dict) -> tuple:
+    return (r.get("decode_tok_s"), r.get("prefill_tok_s"), _quality_coord(r))
 
 def _eligible(r: dict) -> bool:
     if r.get("status") in ("degenerate", "failed", "couldnt_load"):
         return False
-    return all(r.get(k) is not None for k in _OBJ)
+    return all(v is not None for v in _objs(r))
 
 def _dominates(a: dict, b: dict) -> bool:
     """a dominates b: >= on every objective and > on at least one (all maximized)."""
-    ge = all(a[k] >= b[k] for k in _OBJ)
-    gt = any(a[k] > b[k] for k in _OBJ)
+    oa, ob = _objs(a), _objs(b)
+    ge = all(x >= y for x, y in zip(oa, ob))
+    gt = any(x > y for x, y in zip(oa, ob))
     return ge and gt
 
 def pareto_front(records: list[dict]) -> list[dict]:
@@ -130,7 +147,7 @@ def pareto_front(records: list[dict]) -> list[dict]:
     # de-dup configs that tie on all objectives, keep the most recent
     best: dict[tuple, dict] = {}
     for r in front:
-        key = tuple(round(r[k], 6) for k in _OBJ)
+        key = tuple(round(v, 6) for v in _objs(r))
         if key not in best or r["epoch"] > best[key]["epoch"]:
             best[key] = r
     return sorted(best.values(), key=lambda r: -r["decode_tok_s"])
@@ -144,8 +161,9 @@ def _main(argv: list[str]) -> int:
     recs = load(path)
     if cmd == "front":
         for r in pareto_front(recs):
+            ruler = f"bpb={r['bpb']}" if r.get("bpb") is not None else f"Q={r.get('quality')}"
             print(f"{r['id']}  dec={r['decode_tok_s']:.1f}  pre={r.get('prefill_tok_s')}  "
-                  f"Q={r.get('quality')}  eff={r.get('roofline_efficiency')}  {r['config'].get('model','?')}")
+                  f"{ruler}  eff={r.get('roofline_efficiency')}  {r['config'].get('model','?')}")
     elif cmd == "tail":
         n = int(argv[3]) if len(argv) > 3 else 10
         for r in recs[-n:]:
@@ -156,6 +174,32 @@ def _main(argv: list[str]) -> int:
         c = Counter(r["status"] for r in recs)
         print(f"total={len(recs)}  " + "  ".join(f"{k}={v}" for k, v in c.items()))
         print(f"front size={len(pareto_front(recs))}")
+    elif cmd == "record":
+        # Append ONE row from a JSON object (--json '<obj>' or stdin). Unknown keys are ignored
+        # with a stderr warning (so a mis-spelled field is flagged, not silently dropped). Prints
+        # the new record id. (bug B: replaces the documented-but-nonexistent "Record API" CLI.)
+        raw = ""
+        if len(argv) > 3 and argv[3] == "--json":
+            raw = argv[4] if len(argv) > 4 else ""
+        elif len(argv) > 3 and argv[3].startswith("--json="):
+            raw = argv[3][len("--json="):]
+        else:
+            raw = sys.stdin.read()
+        try:
+            obj = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError as e:
+            print(f"ledger record: invalid JSON ({e})", file=sys.stderr); return 2
+        if not isinstance(obj, dict):
+            print("ledger record: expected a JSON object", file=sys.stderr); return 2
+        known = set(Record.__dataclass_fields__)
+        unknown = sorted(set(obj) - known)
+        if unknown:
+            print(f"ledger record: ignoring unknown field(s): {', '.join(unknown)}", file=sys.stderr)
+        try:
+            rec = append(path, Record(**{k: v for k, v in obj.items() if k in known}))
+        except (ValueError, TypeError) as e:
+            print(f"ledger record: {e}", file=sys.stderr); return 2
+        print(rec.id)
     else:
         print(__doc__); return 1
     return 0

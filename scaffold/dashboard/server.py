@@ -214,7 +214,7 @@ def _models_table(recs: list[dict]) -> list[dict]:
             g = groups[key] = {"model": model, "quant": quant,
                                "cpu_decode": None, "gpu_decode": None,
                                "cpu_prefill": None, "gpu_prefill": None,
-                               "quality": None, "math_pass": None, "code_pass": None,
+                               "quality": None, "bpb": None, "math_pass": None, "code_pass": None,
                                "roofline_eff": None, "depth_drop_pct": None,
                                "statuses": [], "n": 0, "last_epoch": 0}
         g["n"] += 1
@@ -228,7 +228,7 @@ def _models_table(recs: list[dict]) -> list[dict]:
             g[field] = val if cur is None else max(cur, val)
         _hi("gpu_decode" if gpu else "cpu_decode", r.get("decode_tok_s"))
         _hi("gpu_prefill" if gpu else "cpu_prefill", r.get("prefill_tok_s"))
-        for f in ("quality", "math_pass", "code_pass", "roofline_eff"):
+        for f in ("quality", "bpb", "math_pass", "code_pass", "roofline_eff"):
             src = "roofline_efficiency" if f == "roofline_eff" else f
             v = r.get(src)
             if v is not None and g[f] is None:
@@ -236,14 +236,20 @@ def _models_table(recs: list[dict]) -> list[dict]:
     rows = list(groups.values())
     for g in rows:
         g["best_decode"] = g["gpu_decode"] if g["gpu_decode"] is not None else g["cpu_decode"]
-        if g["quality"] is not None:
-            g["quality_kind"] = "elo"
-            g["quality_score"] = g["quality"]
+        # bug A: label the quality number by its TRUE source. BPB is the cross-model ruler
+        # (lower = better); math/code is the objective grader; the raw `quality` scalar is a
+        # single-model number and is NOT Elo — never blanket-label a populated `quality` "elo".
+        if g["bpb"] is not None:
+            g["quality_kind"] = "bpb"
+            g["quality_score"] = round(g["bpb"], 4)
         elif g["math_pass"] is not None or g["code_pass"] is not None:
             m = g["math_pass"] or 0.0
             c = g["code_pass"] or 0.0
             g["quality_kind"] = "objective"
             g["quality_score"] = round((m + c) / 2 * 100, 1)
+        elif g["quality"] is not None:
+            g["quality_kind"] = "quality"      # single-model scalar; NOT cross-model Elo
+            g["quality_score"] = g["quality"]
         else:
             g["quality_kind"] = None
             g["quality_score"] = None

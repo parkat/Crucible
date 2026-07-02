@@ -31,8 +31,11 @@ $SSH 'uptime'
 1. `cat "$BOX/campaign.json"` → read the clock: `date +%s` vs `deadline_epoch`. You have no
    internal clock; always shell `date`. (You are inside the window or the relauncher would
    not have launched you.)
-2. Read `"$BOX/MEMORY.md"` (the brain transplant) and `python3 scaffold/ledger.py tail
-   "$BOX/ledger.jsonl" 15` + `... front "$BOX/ledger.jsonl"` (the live Pareto front).
+2. Read `"$BOX/MEMORY.md"` — the working **head** (current phase, queue, Pareto front, recent
+   findings, latest landscape snapshot). For older history, `grep "$BOX/MEMORY_ARCHIVE.md"` on
+   demand; do **not** read the archive wholesale (token-opt: keeps per-unit context bounded).
+   Then `python3 scaffold/ledger.py tail "$BOX/ledger.jsonl" 15` + `... front "$BOX/ledger.jsonl"`
+   (the live Pareto front).
 3. Read `"$BOX/STEERING.md"` if it exists — the operator's inbox of human-injected research
    directions (a front the human found and wants pursued). See the next section.
 4. Skim `doctrine/` if anything is unclear; `00_PRIME_DIRECTIVE.md` governs novel calls.
@@ -88,14 +91,25 @@ If the top item is not actually takeable (ambiguous, too big, blocked), your uni
 - **Measurement ([BOX]):** pin the governor, keep the box idle, discard warmup, use
   `llama-bench` (median + variance). GPU runs use the resolved `--build` (CUDA) dir with
   `-ngl 99`; the CPU `--build --cpu` dir silently ignores `-ngl`.
+- **Known-good engine flags (don't re-discover per unit):** engines diverge on CLI. Stock
+  `llama.cpp` uses `llama-cli` (newer builds also ship `llama-completion`); `ik_llama.cpp` differs
+  again. Flags seen **rejected** on some builds: `-st`, `-no-cnv`/`--no-cnv`, `--no-display-prompt`,
+  and `--version`/`-d` on `llama-bench`. Before scripting a bench, probe `<bin> --help` once, then
+  record the working invocation for that engine under a **"Known-good flags per engine"** block in
+  `MEMORY.md` so it compounds instead of being re-learned every unit.
 
 ## Record (append-only) and commit to the BOX's repo
 
-- Write the result — including `failed` / `couldnt_load` / `degenerate` — via the ledger:
+- Write the result — including `failed` / `couldnt_load` / `degenerate` — via the ledger's
+  `record` subcommand (reads a JSON object on stdin or `--json`; unknown keys warn; prints the id):
   ```bash
-  python3 scaffold/ledger.py   # (use the Record API; one JSONL row, with parent id + config)
+  echo '{"status":"contender","parent":"<parent-id>","config":{"engine":"...","model":"...","quant":"..."},
+         "decode_tok_s":0.0,"prefill_tok_s":0.0,"bpb":0.0,"notes":"..."}' \
+    | python3 scaffold/ledger.py record "$BOX/ledger.jsonl"
   ```
-  Negative and null results are research output; log them.
+  Record `bpb` (the cross-model quality ruler, doctrine 01/02) whenever you have it — it, not the
+  raw `quality` scalar, is what the Pareto front ranks on. Negative and null results are research
+  output; log them.
 - Update `"$BOX/MEMORY.md"` to current truth (phase, front, tried-and-ruled-out, open
   hypotheses, deadline restated).
 - Commit **inside the box's nested repo**:
