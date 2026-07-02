@@ -1,8 +1,13 @@
-# GATE_PROPOSALS — eval-kernel changes awaiting maintainer approval (doctrine/04)
+# GATE_PROPOSALS — eval-kernel changes (doctrine/04)
 
-Two fixes on branch `fix/v0.2-audit-and-token-opt` touch the eval/measurement kernel that
-doctrine/04 gates even at T4. They are **staged, not shipped** — review and approve (or amend)
-before merging to master. Everything else on the branch is ungated and applied directly (see
+> ✅ **HUMAN GATE PASSED — 2026-07-02, operator parker@pureturbos.com.** Proposals A and C are
+> **APPROVED** and shipped in **v0.3**. The operator accepted the residual caveat that C
+> (eval engine-compat) was **not exercised on a real engine** in the audit checkout — it is to
+> be confirmed on the next stock/ik engine run; back it out if that run shows a regression.
+
+Two fixes touch the eval/measurement kernel that doctrine/04 gates even at T4. Originally staged
+on branch `fix/v0.2-audit-and-token-opt`; **now merged to master (v0.3) with human-gate approval
+recorded above.** Everything else on the branch is ungated and was applied directly (see
 "Ungated fixes" at the bottom). Source: optiplex5050 v0.2 deployment handoff, 2026-07-02.
 
 ---
