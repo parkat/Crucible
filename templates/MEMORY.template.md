@@ -3,6 +3,10 @@
 > Lab notebook + brain transplant. A memory-less future session continues the campaign
 > from THIS FILE alone (plus the ledger and the clock). Keep every section current.
 > See doctrine/06 for the contract.
+>
+> **This file is the working HEAD** — keep it small; units read it in full every unit. At
+> consolidate, roll findings/snapshots older than the ~3 most recent into `MEMORY_ARCHIVE.md`
+> (units `grep` it on demand). A bounded head is the single biggest per-unit token saving.
 
 ## Deadline
 - Label: <1hr|6hr|1day|3day|open>
@@ -17,7 +21,7 @@
 
 ## Live Pareto front (summary)
 <!-- non-dominated configs and their axis values; the dashboard renders the full set -->
-| config id | decode tok/s | prefill tok/s | TTFT | quality (Elo) | perf/W | roofline eff |
+| config id | decode tok/s | prefill tok/s | TTFT | quality (bpb↓ or Elo) | perf/W | roofline eff |
 |-----------|--------------|---------------|------|---------------|--------|--------------|
 |           |              |               |      |               |        |              |
 
@@ -27,6 +31,11 @@
 
 ## Research findings (accumulating — the compounding asset)
 <!-- web-research knowledge: techniques, forks, papers, architectures. Cite sources. -->
+-
+
+## Known-good flags per engine
+<!-- bug G: record the working non-interactive invocation per engine so units stop re-learning it.
+     e.g. "stock llama.cpp @<sha>: llama-cli -p ... --no-display-prompt  (-st / --no-cnv REJECTED)". -->
 -
 
 ## Open hypotheses (prioritized queue)

@@ -47,23 +47,37 @@ export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="${CLAUDE_CODE_PRINT_BG_WAIT_CEILING
 NOW="$(date +%s)"
 
 # ---- (re)arm the window -------------------------------------------------------
+# --dry-run MUST be side-effect-free (bug D): compute the epochs either way so a dry-run can
+# preview them, but only WRITE campaign.json on a real run.
 if [ -n "$HOURS" ]; then
   START="$NOW"
   DEADLINE="$(( NOW + HOURS * 3600 ))"
-  python3 - "$BOX/campaign.json" "$START" "$DEADLINE" <<'PY'
+  if [ "$DRY" -eq 0 ]; then
+    python3 - "$BOX/campaign.json" "$START" "$DEADLINE" "$HOURS" <<'PY'
 import json, sys
-path, start, deadline = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+path, start, deadline, hours = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 d = json.load(open(path))
 d["start_epoch"] = start
 d["deadline_epoch"] = deadline          # winddown_margin_frac & all else preserved
+d["duration_label"] = f"{hours}hr"      # keep the label in sync with the epochs (bug F)
 d["state"] = "running"
 json.dump(d, open(path, "w"), indent=2)
 PY
-  echo "run_window: RE-ARMED $BOX for ${HOURS}h (start=$START deadline=$DEADLINE)"
+    echo "run_window: RE-ARMED $BOX for ${HOURS}h (start=$START deadline=$DEADLINE)"
+  else
+    echo "run_window: DRY-RUN would RE-ARM $BOX for ${HOURS}h (start=$START deadline=$DEADLINE) — campaign.json NOT written"
+  fi
 fi
 
 # ---- read the window ----------------------------------------------------------
-read -r START DEADLINE MARGIN FRONT_STALL_K < <(python3 -c "import json;d=json.load(open('$BOX/campaign.json'));print(d.get('start_epoch') or 0, d.get('deadline_epoch') or 0, d.get('winddown_margin_frac') if d.get('winddown_margin_frac') is not None else 0.10, d.get('front_stall_K') or 0)")
+read -r DISK_START DISK_DEADLINE MARGIN FRONT_STALL_K < <(python3 -c "import json;d=json.load(open('$BOX/campaign.json'));print(d.get('start_epoch') or 0, d.get('deadline_epoch') or 0, d.get('winddown_margin_frac') if d.get('winddown_margin_frac') is not None else 0.10, d.get('front_stall_K') or 0)")
+# A real re-arm already wrote these (disk == computed). A --dry-run re-arm deliberately did NOT
+# write (bug D), so keep the computed would-be epochs from the re-arm block for the preview.
+if [ "$DRY" -eq 1 ] && [ -n "$HOURS" ]; then
+  :   # keep computed START/DEADLINE
+else
+  START="$DISK_START"; DEADLINE="$DISK_DEADLINE"
+fi
 
 if [ "${DEADLINE:-0}" -eq 0 ]; then
   # open-ended campaign: no deadline -> never auto-winddown; QUEUE_EMPTY still ends it.
@@ -178,9 +192,45 @@ PY
 # (total_cost_usd, is_error, num_turns) the single-blob `json` format used to emit.
 OUTFMT="--output-format stream-json --verbose"
 
-claude_cmd() {  # $1 = prompt file ; echoes the exact argv (for --dry-run + logging)
-  printf 'claude -p "<%s, {{BOX}}=%s>" --dangerously-skip-permissions %s' \
-    "$(basename "$1")" "$BOX" "$OUTFMT"
+# ---- token-opt: per-unit model routing ----------------------------------------
+# Opus only where its intelligence changes the result — a [BOX] measurement bench on an IDLE box.
+# Sonnet for research / consolidate / [HOST] recon / staging. Any uncertainty -> Sonnet (cheaper,
+# safe): a wrong guess never blocks work, it just costs a bit more or a bit less of the weekly cap.
+OPUS="${CRUCIBLE_MODEL_OPUS:-claude-opus-4-8}"
+SONNET="${CRUCIBLE_MODEL_SONNET:-claude-sonnet-5}"
+pick_model() {  # $1 = research|consolidate|unit ; echoes a model id
+  case "$1" in
+    research|consolidate) echo "$SONNET"; return ;;
+  esac
+  python3 - "$BOX" "$OPUS" "$SONNET" <<'PY'
+import sys, re, os, subprocess
+box, opus, sonnet = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    head = open(os.path.join(box, "MEMORY.md"), encoding="utf-8", errors="ignore").read()
+except OSError:
+    print(sonnet); raise SystemExit
+m = re.search(r"###\s*TAKEABLE NOW.*?(\[BOX\]|\[HOST\]|\[EITHER\])", head, re.S | re.I)
+if (m.group(1).upper() if m else "[HOST]") != "[BOX]":
+    print(sonnet); raise SystemExit           # not a [BOX] bench -> Sonnet
+# a [BOX] bench earns Opus only if the box is actually idle; probe best-effort, fail -> sonnet.
+idle = False
+try:
+    ssh = subprocess.check_output(["python3", "scaffold/boxpaths.py", box, "--ssh"],
+                                  text=True, timeout=15).split()
+    free = subprocess.run(ssh + ["nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits"],
+                          capture_output=True, text=True, timeout=20)
+    srv = subprocess.run(ssh + ["pgrep -x llama-server"], capture_output=True, text=True, timeout=20)
+    tok = free.stdout.strip().split()
+    idle = free.returncode == 0 and tok and int(tok[0]) >= 2400 and srv.returncode != 0
+except Exception:
+    idle = False
+print(opus if idle else sonnet)
+PY
+}
+
+claude_cmd() {  # $1 = prompt file ; $2 = model ; echoes the exact argv (for --dry-run + logging)
+  printf 'claude -p "<%s, {{BOX}}=%s>" --model %s --dangerously-skip-permissions %s' \
+    "$(basename "$1")" "$BOX" "${2:-$OPUS}" "$OUTFMT"
 }
 
 SENTINEL="$BOX/work/QUEUE_EMPTY"
@@ -196,11 +246,12 @@ if [ "$DRY" -eq 1 ]; then
   echo   "  winddown_epoch= $WINDDOWN   (= deadline - (deadline-start)*frac)"
   if [ "$WINDDOWN" -ne 0 ] && [ "$NOW" -ge "$WINDDOWN" ]; then
     echo "  phase         = WINDDOWN reached -> would run consolidate ONCE then exit"
-    echo "  would invoke  : $(claude_cmd "$CONSOLIDATE_PROMPT")"
+    echo "  would invoke  : $(claude_cmd "$CONSOLIDATE_PROMPT" "$(pick_model consolidate)")"
   else
     [ "$DEADLINE" -ne 0 ] && echo "  seconds to winddown = $(( WINDDOWN - NOW ))"
     echo "  phase         = RUNNING -> would loop bounded units until winddown/QUEUE_EMPTY"
-    echo "  would invoke  : $(claude_cmd "$UNIT_PROMPT")"
+    echo "  model routing = research/consolidate=$SONNET ; [BOX]-idle bench=$OPUS ; else=$SONNET"
+    echo "  would invoke  : $(claude_cmd "$UNIT_PROMPT" "$(pick_model unit)")"
     echo "  sentinel      = $SENTINEL (early -> consolidate)"
   fi
   echo   "  bg wait ceiling (ms) = $CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"
@@ -229,14 +280,16 @@ while : ; do
   # row, so the research output gets a normal unit to act on it before we research again.
   if [ "$LAST_RESEARCH" -eq 0 ] && [ "$(front_stalled)" = "1" ]; then
     THIS_RESEARCH=1
-    echo "run_window: $(date -Is) launch unit #$UNIT [RESEARCH — front stalled >= $FRONT_STALL_K measured records]" | tee -a "$LOG"
-    render_research "$UNIT_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions $OUTFMT \
+    MODEL="$(pick_model research)"
+    echo "run_window: $(date -Is) launch unit #$UNIT [RESEARCH — front stalled >= $FRONT_STALL_K measured records] [model=$MODEL]" | tee -a "$LOG"
+    render_research "$UNIT_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
       > "$UNIT_FILE" 2>>"$LOG" \
       || echo "run_window: $(date -Is) unit #$UNIT (research) exited non-zero (logged; continuing)" | tee -a "$LOG"
   else
     THIS_RESEARCH=0
-    echo "run_window: $(date -Is) launch unit #$UNIT" | tee -a "$LOG"
-    render "$UNIT_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions $OUTFMT \
+    MODEL="$(pick_model unit)"
+    echo "run_window: $(date -Is) launch unit #$UNIT [model=$MODEL]" | tee -a "$LOG"
+    render "$UNIT_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
       > "$UNIT_FILE" 2>>"$LOG" \
       || echo "run_window: $(date -Is) unit #$UNIT exited non-zero (logged; continuing)" | tee -a "$LOG"
   fi
@@ -254,8 +307,9 @@ while : ; do
 done
 
 # ---- consolidate ONCE, then exit ----------------------------------------------
-echo "run_window: $(date -Is) consolidate" | tee -a "$LOG"
-render "$CONSOLIDATE_PROMPT" | claude -p "$(cat)" --dangerously-skip-permissions $OUTFMT \
+MODEL="$(pick_model consolidate)"
+echo "run_window: $(date -Is) consolidate [model=$MODEL]" | tee -a "$LOG"
+render "$CONSOLIDATE_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
   > "$LOGDIR/consolidate_$(date +%s).jsonl" 2>>"$LOG" \
   || echo "run_window: $(date -Is) consolidate exited non-zero (logged)" | tee -a "$LOG"
 python3 -c "import json;p='$BOX/campaign.json';d=json.load(open(p));d['state']='completed';json.dump(d,open(p,'w'),indent=2)"

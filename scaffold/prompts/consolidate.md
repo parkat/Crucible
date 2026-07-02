@@ -30,6 +30,13 @@ SSH="$(python3 scaffold/boxpaths.py "$BOX" --ssh)"    # only if you must confirm
 1. **MEMORY.md current + consistent.** Reconcile the headline, the live Pareto front, the
    tried-and-ruled-out list, and the open-hypotheses queue with what the ledger actually
    shows. Fix any stale numbers. Restate the deadline. Remove contradictions.
+   - **Keep the head bounded (token-opt).** `MEMORY.md` is the working **head** — units read it
+     in full every unit, so it must stay small. Move anything older than the ~3 most recent
+     research-findings / landscape-snapshot blocks (and superseded queue-state blocks) out of
+     `MEMORY.md` into `"$BOX/MEMORY_ARCHIVE.md"` (append; prepend a one-line index of what moved).
+     The head always keeps: current phase, queue + TAKEABLE-NOW top, live Pareto front, the last
+     ~3 findings, and the latest landscape snapshot. Nothing is lost — units `grep` the archive on
+     demand.
 2. **Queue clean + tagged + takeable-top.** Every open item carries a resource tag
    (`[BOX]`/`[HOST]`/`[EITHER]`); the **top is a single small takeable item** so the next
    window starts instantly. Carry forward open hypotheses with their locate-and-redirect

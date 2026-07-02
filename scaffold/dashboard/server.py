@@ -98,15 +98,21 @@ def _queue_item(block: str, section: str) -> dict:
     return {"id": bid, "title": title, "tags": tags, "status": status, "section": section}
 
 def _bullets(sec: str) -> list[str]:
-    """Top-level '- ' bullet blocks (indented sub-units stay attached to their parent)."""
+    """Top-level '- ' bullet blocks (indented sub-units stay attached to their parent).
+
+    Also recognizes BLOCKQUOTED bullets ('> - ...'): the live queue top is often written as
+    blockquote prose under '### TAKEABLE NOW', and without stripping the '>' the parser skips it
+    and locks onto stale plain bullets deeper in the (unpruned) section — surfacing a days-old
+    'top'. (dashboard queue-parse bug, found on the Precision390 live window.)"""
     blocks, cur = [], None
     for ln in sec.splitlines():
-        if re.match(r"^[-*] ", ln):
+        s = re.sub(r"^\s*>+\s?", "", ln)   # strip a leading blockquote marker, if any
+        if re.match(r"^[-*] ", s):
             if cur is not None:
                 blocks.append("\n".join(cur))
-            cur = [ln]
+            cur = [s]
         elif cur is not None:
-            cur.append(ln)
+            cur.append(s)
     if cur is not None:
         blocks.append("\n".join(cur))
     return [b for b in blocks if b.strip()]
@@ -123,17 +129,36 @@ def _queue(md: str) -> dict:
     for head, sec in zip(it, it):
         head = head.strip()
         up = head.upper()
-        is_closed = "CLOSED" in up or "DONE" in up
+        section_closed = "CLOSED" in up or "DONE" in up
         is_takeable = "TAKEABLE" in up
-        for idx, blk in enumerate(_bullets(sec)):
+        for blk in _bullets(sec):
             item = _queue_item(blk, head)
-            if is_closed:
+            # Classify done PER ITEM, not just by section head: most items are marked "[Kxx] DONE"
+            # inside the '### TAKEABLE NOW' prose, so a header-only rule miscounts them as open.
+            item_done = item.get("status") in ("✅", "❌", "✓", "✗") or \
+                bool(re.search(r"\b(DONE|CLOSED|NO-GO|SUBSUMED|DEPRECATED)\b|DEAD END", blk.upper()))
+            if section_closed or item_done:
                 out["closed"].append(item)
             else:
                 out["open"].append(item)
-                if is_takeable and idx == 0 and out["takeable_id"] is None:
+                if is_takeable and out["takeable_id"] is None:
                     out["takeable_id"] = item["id"] or item["title"]
+    # De-dup by id and resolve conflicts: an id that is OPEN (e.g. the live takeable top) must not
+    # also appear in closed — block-merged prose can pull a stray 'DONE' into a live item's block.
+    open_ids = {i["id"] for i in out["open"] if i["id"]}
+    out["closed"] = _dedup_items(i for i in out["closed"] if not (i["id"] and i["id"] in open_ids))
+    out["open"] = _dedup_items(out["open"])
     return out
+
+def _dedup_items(items) -> list[dict]:
+    seen, keep = set(), []
+    for i in items:
+        k = i["id"] or i["title"]
+        if k in seen:
+            continue
+        seen.add(k)
+        keep.append(i)
+    return keep
 
 def _steering(box: str) -> dict:
     """Operator steering inbox (STEERING.md): pending notes + recently consumed.
@@ -214,7 +239,7 @@ def _models_table(recs: list[dict]) -> list[dict]:
             g = groups[key] = {"model": model, "quant": quant,
                                "cpu_decode": None, "gpu_decode": None,
                                "cpu_prefill": None, "gpu_prefill": None,
-                               "quality": None, "math_pass": None, "code_pass": None,
+                               "quality": None, "bpb": None, "math_pass": None, "code_pass": None,
                                "roofline_eff": None, "depth_drop_pct": None,
                                "statuses": [], "n": 0, "last_epoch": 0}
         g["n"] += 1
@@ -228,7 +253,7 @@ def _models_table(recs: list[dict]) -> list[dict]:
             g[field] = val if cur is None else max(cur, val)
         _hi("gpu_decode" if gpu else "cpu_decode", r.get("decode_tok_s"))
         _hi("gpu_prefill" if gpu else "cpu_prefill", r.get("prefill_tok_s"))
-        for f in ("quality", "math_pass", "code_pass", "roofline_eff"):
+        for f in ("quality", "bpb", "math_pass", "code_pass", "roofline_eff"):
             src = "roofline_efficiency" if f == "roofline_eff" else f
             v = r.get(src)
             if v is not None and g[f] is None:
@@ -236,14 +261,20 @@ def _models_table(recs: list[dict]) -> list[dict]:
     rows = list(groups.values())
     for g in rows:
         g["best_decode"] = g["gpu_decode"] if g["gpu_decode"] is not None else g["cpu_decode"]
-        if g["quality"] is not None:
-            g["quality_kind"] = "elo"
-            g["quality_score"] = g["quality"]
+        # bug A: label the quality number by its TRUE source. BPB is the cross-model ruler
+        # (lower = better); math/code is the objective grader; the raw `quality` scalar is a
+        # single-model number and is NOT Elo — never blanket-label a populated `quality` "elo".
+        if g["bpb"] is not None:
+            g["quality_kind"] = "bpb"
+            g["quality_score"] = round(g["bpb"], 4)
         elif g["math_pass"] is not None or g["code_pass"] is not None:
             m = g["math_pass"] or 0.0
             c = g["code_pass"] or 0.0
             g["quality_kind"] = "objective"
             g["quality_score"] = round((m + c) / 2 * 100, 1)
+        elif g["quality"] is not None:
+            g["quality_kind"] = "quality"      # single-model scalar; NOT cross-model Elo
+            g["quality_score"] = g["quality"]
         else:
             g["quality_kind"] = None
             g["quality_score"] = None
