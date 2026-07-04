@@ -80,7 +80,8 @@ else
 fi
 
 if [ "${DEADLINE:-0}" -eq 0 ]; then
-  # open-ended campaign: no deadline -> never auto-winddown; QUEUE_EMPTY still ends it.
+  # open-ended campaign: no deadline -> never auto-winddown; an empty queue triggers a research
+  # refill (and only ends if that refill also comes up empty).
   WINDDOWN=0
 else
   WINDDOWN="$(python3 -c "print(int($DEADLINE - ($DEADLINE - $START) * $MARGIN))")"
@@ -89,49 +90,31 @@ fi
 # ---- helper: build the box-injected prompt for `claude -p` ---------------------
 render() { sed "s|{{BOX}}|$BOX|g" "$1"; }
 
-# ---- stall trigger: turn doctrine/03's "research whenever the front stalls" into real
-#      automation. front_stalled() echoes 1 when the Pareto front has not gained ground in
-#      >= FRONT_STALL_K *measured* records (research/finding rows don't count, so a research
-#      unit can't keep re-triggering itself). Anything unexpected -> 0 (never wedge the loop).
-front_stalled() {
-  [ "${FRONT_STALL_K:-0}" -gt 0 ] || { echo 0; return; }
-  python3 - "$BOX/ledger.jsonl" "$FRONT_STALL_K" <<'PY'
-import sys
-sys.path.insert(0, "scaffold")
-try:
-    import ledger
-    path, K = sys.argv[1], int(sys.argv[2])
-    recs = ledger.load(path)
-    front = ledger.pareto_front(recs)
-    if not front:
-        print(0); raise SystemExit          # no front yet -> still building, not stalled
-    fids = {id(f) for f in front}
-    last = max((i for i, r in enumerate(recs) if id(r) in fids), default=-1)
-    since = sum(1 for r in recs[last + 1:]
-                if r.get("decode_tok_s") is not None or r.get("prefill_tok_s") is not None)
-    print(1 if since >= K else 0)
-except SystemExit:
-    raise
-except Exception:
-    print(0)
-PY
-}
+# ---- research is gated behind an EMPTY QUEUE (not a stalled front) --------------------
+# When the worker signals the takeable queue is empty (it writes the QUEUE_EMPTY sentinel), the
+# relauncher spends ONE unit on a research pass that must REFILL the queue with >= REFILL_MIN
+# takeable items and then clear the sentinel, after which grinding resumes. If research cannot
+# refill, it leaves the sentinel and the loop consolidates. This replaces the old front-stall
+# trigger, which churned research while a non-empty queue still had takeable work.
+REFILL_MIN="${CRUCIBLE_REFILL_MIN:-5}"
 
-# When stalled, the next unit is spent on a web-research phase instead of grinding the stale
-# queue: prepend a directive, then the standard unit contract (for gating/recording/resolver).
-render_research() {
+render_research_refill() {
   cat <<EOF
-‼ FRONT STALLED — RESEARCH UNIT (injected by run_window.sh: the Pareto front has not improved
-in >= ${FRONT_STALL_K} measured records). For THIS unit ONLY, run a web-research phase per
-doctrine/03 instead of taking the stale queue top:
+‼ QUEUE EMPTY — RESEARCH-REFILL UNIT (injected by run_window.sh: the takeable queue is empty).
+For THIS unit ONLY, run a web-research phase per doctrine/03 to REFILL the queue — do NOT bench:
   - FIRST fold in any operator notes from "${BOX}/STEERING.md" (Inbox) and empty them per the
     steering invariant — a human-pointed front outranks an automated search direction;
-  - search the CURRENT ($(date +%Y)) landscape for AVX-less / bandwidth-bound CPU inference,
-    new architectures (SSM/RWKV/Mamba & successors), relevant engine forks, and recent papers;
+  - search the CURRENT ($(date +%Y)) landscape for AVX-less / bandwidth-bound CPU inference, new
+    architectures (SSM/RWKV/Mamba/ternary & successors), engine forks, and recent papers;
   - write findings into "${BOX}/MEMORY.md" and refresh its dated landscape snapshot;
-  - push 1–3 NEW small, takeable, resource-tagged ([BOX]/[HOST]/[EITHER]) hypotheses to the TOP
-    of the queue so the next units have fresh directions;
-  - log a research record to the ledger. Do NOT bench on this unit. Then STOP.
+  - push **AT LEAST ${REFILL_MIN}** NEW small, takeable, resource-tagged ([BOX]/[HOST]/[EITHER])
+    hypotheses onto the queue (a single small takeable item at the TAKEABLE-NOW top) so the next
+    units have concrete directions;
+  - log a research record to the ledger;
+  - **THEN clear the empty-queue sentinel so grinding resumes:** \`rm -f "${BOX}/work/QUEUE_EMPTY"\`.
+    ONLY if you genuinely cannot find ${REFILL_MIN} tractable directions, LEAVE the sentinel in
+    place — the relauncher will then consolidate and end the campaign.
+  Do NOT bench on this unit. Then STOP.
 
 --- the standard unit contract follows (format, gating, recording, resolver use) ---
 EOF
@@ -249,10 +232,10 @@ if [ "$DRY" -eq 1 ]; then
     echo "  would invoke  : $(claude_cmd "$CONSOLIDATE_PROMPT" "$(pick_model consolidate)")"
   else
     [ "$DEADLINE" -ne 0 ] && echo "  seconds to winddown = $(( WINDDOWN - NOW ))"
-    echo "  phase         = RUNNING -> would loop bounded units until winddown/QUEUE_EMPTY"
+    echo "  phase         = RUNNING -> grind the queue until winddown; empty queue -> research refill (>= $REFILL_MIN)"
     echo "  model routing = research/consolidate=$SONNET ; [BOX]-idle bench=$OPUS ; else=$SONNET"
     echo "  would invoke  : $(claude_cmd "$UNIT_PROMPT" "$(pick_model unit)")"
-    echo "  sentinel      = $SENTINEL (early -> consolidate)"
+    echo "  sentinel      = $SENTINEL (empty queue -> research refill >= $REFILL_MIN, not early-exit)"
   fi
   echo   "  bg wait ceiling (ms) = $CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"
   exit 0
@@ -263,26 +246,23 @@ command -v claude >/dev/null 2>&1 || { echo "run_window: 'claude' CLI not on PAT
 mkdir -p "$LOGDIR"
 echo "run_window: $(date -Is) START box=$BOX winddown=$WINDDOWN deadline=$DEADLINE" >> "$LOG"
 
-UNIT=0; LAST_RESEARCH=0
+UNIT=0
 while : ; do
   NOW="$(date +%s)"
   if [ "$WINDDOWN" -ne 0 ] && [ "$NOW" -ge "$WINDDOWN" ]; then
     echo "run_window: $(date -Is) WINDDOWN reached -> consolidate" | tee -a "$LOG"
     break
   fi
-  if [ -f "$SENTINEL" ]; then
-    echo "run_window: $(date -Is) QUEUE_EMPTY sentinel -> consolidate early" | tee -a "$LOG"
-    break
-  fi
   UNIT=$(( UNIT + 1 ))
   UNIT_FILE="$LOGDIR/unit_$(date +%s)_$UNIT.jsonl"
-  # stall trigger: spend this unit on research when the front has stalled — but never two in a
-  # row, so the research output gets a normal unit to act on it before we research again.
-  if [ "$LAST_RESEARCH" -eq 0 ] && [ "$(front_stalled)" = "1" ]; then
+  # research is gated behind an EMPTY QUEUE: the worker writes the QUEUE_EMPTY sentinel when the
+  # takeable queue is empty; that unit is spent refilling it (>= REFILL_MIN items) and clearing
+  # the sentinel. Otherwise, grind the queue top.
+  if [ -f "$SENTINEL" ]; then
     THIS_RESEARCH=1
     MODEL="$(pick_model research)"
-    echo "run_window: $(date -Is) launch unit #$UNIT [RESEARCH — front stalled >= $FRONT_STALL_K measured records] [model=$MODEL]" | tee -a "$LOG"
-    render_research "$UNIT_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
+    echo "run_window: $(date -Is) launch unit #$UNIT [RESEARCH — queue empty, refill >= $REFILL_MIN] [model=$MODEL]" | tee -a "$LOG"
+    render_research_refill "$UNIT_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
       > "$UNIT_FILE" 2>>"$LOG" \
       || echo "run_window: $(date -Is) unit #$UNIT (research) exited non-zero (logged; continuing)" | tee -a "$LOG"
   else
@@ -293,8 +273,8 @@ while : ; do
       > "$UNIT_FILE" 2>>"$LOG" \
       || echo "run_window: $(date -Is) unit #$UNIT exited non-zero (logged; continuing)" | tee -a "$LOG"
   fi
-  # session-limit backoff: if this unit was a limit no-op, drop it (don't count it, don't flip
-  # the research flag) and sleep until the reset instead of tight-relaunching against the cap.
+  # session-limit backoff: if this unit was a limit no-op, drop it (don't count it) and sleep
+  # until the reset instead of tight-relaunching against the cap.
   SLEEP="$(limit_sleep_secs "$UNIT_FILE")"
   if [ "${SLEEP:-0}" -gt 0 ]; then
     echo "run_window: $(date -Is) SESSION LIMIT on unit #$UNIT -> back off ${SLEEP}s (until reset); no-op dropped, not counted" | tee -a "$LOG"
@@ -303,7 +283,13 @@ while : ; do
     sleep "$SLEEP"
     continue
   fi
-  LAST_RESEARCH=$THIS_RESEARCH
+  # empty-queue exhaustion guard: a research-refill unit MUST push >= REFILL_MIN items and clear
+  # the sentinel. If it ran (not a limit no-op) yet the sentinel is STILL present, the campaign is
+  # genuinely out of tractable directions -> consolidate.
+  if [ "$THIS_RESEARCH" -eq 1 ] && [ -f "$SENTINEL" ]; then
+    echo "run_window: $(date -Is) research refill left the queue empty -> consolidate (campaign exhausted)" | tee -a "$LOG"
+    break
+  fi
 done
 
 # ---- consolidate ONCE, then exit ----------------------------------------------

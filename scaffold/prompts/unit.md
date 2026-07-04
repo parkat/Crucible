@@ -130,11 +130,16 @@ weights pre-faulted to isolate page-in cost" — locate, then redirect.)
 ## Leave the queue takeable, then STOP
 
 Ensure the **top of the queue is again a single small takeable item** (the QUEUE INVARIANT)
-so the next unit can start instantly. If you genuinely emptied the queue and nothing tractable
-remains, write the sentinel so the relauncher consolidates:
+so the next unit can start instantly. If you genuinely emptied the queue and nothing takeable
+remains, write the empty-queue sentinel:
 
 ```bash
 mkdir -p "$BOX/work" && touch "$BOX/work/QUEUE_EMPTY"
 ```
+
+The sentinel tells the relauncher to spend the **next** unit on a research pass that refills the
+queue with **≥5** new takeable hypotheses and then clears the sentinel, after which grinding
+resumes. (The campaign only consolidates if that research pass *also* finds nothing.) Do NOT write
+the sentinel while any takeable item remains — it is for a genuinely empty queue only.
 
 Then **STOP**. One unit. Do not continue.
