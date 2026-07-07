@@ -807,6 +807,8 @@ def build_box(box: str, now: float) -> dict:
         "queue": _queue(md),
         "steering": _steering(box),
         "hardware": _hardware(box),
+        "hardware_live": _read_json(os.path.join(box, "work", "hw_status.json"), None),  # last on-demand probe
+        "paused": os.path.exists(os.path.join(box, "work", "PAUSE")),
         "remaining_s": remaining,
         "counts": dict(tally),
         "n_records": len(recs),

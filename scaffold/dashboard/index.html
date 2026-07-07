@@ -435,6 +435,60 @@
     .grid.sectioned{grid-template-columns:1fr}
     .grid.sectioned > .panel{grid-column:1 / -1}
   }
+  /* ══ Control page ══ */
+  .cmdbar{display:flex; align-items:center; gap:14px; flex-wrap:wrap; background:var(--panel); border:1px solid var(--hair); border-radius:12px; padding:13px 16px; margin-bottom:14px}
+  .cmd-left{display:flex; align-items:center; gap:12px; font-family:var(--mono); font-size:11px; color:var(--ink-dim)}
+  .cmd-right{margin-left:auto; display:flex; gap:8px; flex-wrap:wrap}
+  .st-pill{font:600 8.5px/1 var(--mono); letter-spacing:.5px; text-transform:uppercase; padding:5px 9px; border-radius:20px; display:inline-flex; align-items:center; gap:5px}
+  .st-pill.run{color:var(--good); background:color-mix(in srgb,var(--good) 16%,transparent)}
+  .st-pill.paused{color:var(--warn); background:color-mix(in srgb,var(--warn) 16%,transparent)}
+  .st-pill.idle,.st-pill.done,.st-pill.killed{color:var(--ink-faint); background:var(--panel-2)}
+  .st-pill .d{width:7px; height:7px; border-radius:50%; background:currentColor}
+  .btn{font:600 12px/1 var(--mono); letter-spacing:.2px; border-radius:8px; padding:9px 14px; cursor:pointer; border:1px solid var(--hair); background:transparent; color:var(--ink-dim); display:inline-flex; align-items:center; gap:7px; transition:.15s; white-space:nowrap}
+  .btn:hover{color:var(--ink); border-color:var(--ink-faint)}
+  .btn:disabled{opacity:.4; cursor:not-allowed}
+  .btn.btn-sm{padding:5px 9px; font-size:10px}
+  .btn[data-sev=warn]{color:var(--warn)} .btn[data-sev=danger]{color:var(--bad)} .btn[data-sev=primary]{color:var(--accent)}
+  .btn[data-sev]:hover{border-color:currentColor}
+  .cmd-right .btn{padding:10px 16px}
+  .cmd-right .btn[data-sev=primary],.cmd-right .btn[data-sev=good]{background:var(--accent); border-color:var(--accent); color:var(--paper)}
+  .cmd-right .btn[data-sev=good]{background:var(--good); border-color:var(--good); color:var(--paper)}
+  .cmd-right .btn[data-sev=warn]{background:var(--warn); border-color:var(--warn); color:#1a1206}
+  .cmd-right .btn[data-sev=danger]{background:var(--bad); border-color:var(--bad); color:#fff}
+  .in{font:500 12px/1.4 var(--mono); color:var(--ink); background:var(--well); border:1px solid var(--hair); border-radius:8px; padding:9px 11px; width:100%; resize:vertical}
+  .in:focus{outline:none; border-color:var(--accent)}
+  .in-sm{width:60px; flex:none}
+  .field{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  .btnrow{display:flex; gap:8px; flex-wrap:wrap; align-items:center}
+  .chips{display:flex; gap:5px} .chip{font:600 10px/1 var(--mono); padding:6px 9px; border-radius:7px; border:1px solid var(--hair); color:var(--ink-dim); cursor:pointer}
+  .chip.on{color:var(--paper); background:var(--accent); border-color:var(--accent)}
+  .rlbl{display:flex; gap:6px; align-items:center; font:500 10.5px/1 var(--mono); color:var(--ink-faint); cursor:pointer}
+  .ctl-list{display:flex; flex-direction:column}
+  .ctl-row{display:flex; align-items:center; gap:9px; font:500 11px/1.4 var(--mono); padding:7px 0; border-top:1px solid var(--hair-soft)}
+  .ctl-row .tag{font-size:9px; padding:3px 6px; border-radius:5px; border:1px solid var(--hair); color:var(--ink-faint); flex:none}
+  .ctl-row .x{margin-left:auto; width:22px; height:22px; border-radius:6px; border:1px solid var(--hair); color:var(--ink-faint); cursor:pointer; display:grid; place-items:center; font-size:12px; flex:none}
+  .ctl-row .x:hover{color:var(--bad); border-color:var(--bad)}
+  .ctl-empty{font:500 11px/1.5 var(--mono); color:var(--ink-faint); padding:6px 0}
+  .cockpit{display:flex; flex-direction:column; gap:11px}
+  .ck-head{display:flex; align-items:center; gap:10px; font:600 13px/1 var(--mono)}
+  .ck-feed{font:500 10.5px/1.6 var(--mono); color:var(--ink-dim); display:flex; flex-direction:column; gap:2px; max-height:170px; overflow:auto; background:var(--well); border:1px solid var(--hair-soft); border-radius:8px; padding:9px 11px}
+  .ck-feed .c{color:var(--accent)} .ck-feed .m{color:var(--ink-faint)}
+  .ck-tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(74px,1fr)); gap:8px}
+  .ck-tile{border:1px solid var(--hair); border-radius:8px; padding:6px 9px}
+  .ck-tile .k{font:600 8.5px/1 var(--mono); letter-spacing:.5px; text-transform:uppercase; color:var(--ink-faint)} .ck-tile .v{font:600 15px/1.1 var(--mono); margin-top:3px}
+  .hwgrid{display:flex; flex-direction:column; gap:8px}
+  .hwrow{display:flex; align-items:center; gap:10px; font:500 11px/1.3 var(--mono)} .hwrow .k{width:38px; color:var(--ink-faint); flex:none} .hwrow .v{width:118px; text-align:right; color:var(--ink); flex:none}
+  .gz{flex:1; height:8px; border-radius:5px; background:var(--panel-2); overflow:hidden} .gz>span{display:block; height:100%; background:var(--accent)}
+  .gz.warn>span{background:var(--warn)} .gz.bad>span{background:var(--bad)}
+  #toasts{position:fixed; right:18px; bottom:18px; z-index:9998; display:flex; flex-direction:column; gap:8px}
+  .toast{font:500 12px/1.4 var(--mono); background:var(--panel); border:1px solid var(--hair); border-left:3px solid var(--accent); border-radius:8px; padding:10px 14px; max-width:380px; box-shadow:0 6px 24px rgba(0,0,0,.22); animation:tin .2s ease}
+  .toast.err{border-left-color:var(--bad)} .toast.ok{border-left-color:var(--good)}
+  @keyframes tin{from{transform:translateY(8px); opacity:0}}
+  #confirm-scrim{position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center}
+  #confirm-scrim.on{display:flex}
+  .cfm{background:var(--panel); border:1px solid var(--hair); border-radius:12px; padding:20px 22px; max-width:430px; display:flex; flex-direction:column; gap:14px}
+  .cfm .ct{font:600 14px/1.4 var(--sans)} .cfm .cm{font:500 12px/1.5 var(--mono); color:var(--ink-dim)}
+  .cfm .cbtns{display:flex; gap:8px; justify-content:flex-end}
 
   /* ── customize drawer ── */
   .scrim{position:fixed; inset:0; background:rgba(20,18,13,.4); opacity:0; pointer-events:none; transition:opacity .25s ease; z-index:40}
@@ -491,6 +545,10 @@
   </div>
 </div>
 
+<div id="toasts"></div>
+<div id="confirm-scrim"><div class="cfm"><div class="ct" id="cfm-title"></div><div class="cm" id="cfm-msg"></div>
+  <div class="cbtns"><button class="btn" id="cfm-cancel">Cancel</button><button class="btn" data-sev="danger" id="cfm-ok">Confirm</button></div></div></div>
+
 <div class="wrap">
 
   <!-- fleet bar -->
@@ -525,6 +583,7 @@
 
   <nav class="tabbar" id="tabbar" aria-label="Sections">
     <button class="tab" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="control">Control</button>
     <button class="tab" data-tab="performance">Performance</button>
     <button class="tab" data-tab="research">Research &amp; Queue</button>
     <button class="tab" data-tab="cost">Cost &amp; Tokens</button>
@@ -532,7 +591,58 @@
     <button class="tab" data-tab="all">All</button>
   </nav>
 
+  <!-- ══ Control page: command bar (full-width, run controls) — shown only on the Control tab ══ -->
+  <div id="cmdbar" class="cmdbar" data-panel="run" data-panel-label="Run control" data-tabhidden>
+    <div class="cmd-left" id="cmd-status"></div>
+    <div class="cmd-right" id="cmd-btns"></div>
+  </div>
+
   <div class="grid sectioned">
+
+    <!-- ══ Control page cards (shown only on the Control tab) ══ -->
+    <div class="panel c6" data-panel="cockpit" data-panel-label="Live agent" data-tabhidden>
+      <h2>Live agent</h2>
+      <div class="sub">the current unit, live</div>
+      <div id="cockpit-body" class="cockpit"></div>
+    </div>
+    <div class="panel c3" data-panel="steer-ctl" data-panel-label="Steering" data-tabhidden>
+      <h2>Steering</h2>
+      <div class="sub">point the campaign at a front — outranks the queue</div>
+      <textarea id="steer-text" class="in" rows="2" placeholder="e.g. survey 2026 SSM / RWKV forks…"></textarea>
+      <div class="field">
+        <div class="chips" id="steer-tags"><span class="chip on" data-tag="">auto</span><span class="chip" data-tag="BOX">BOX</span><span class="chip" data-tag="HOST">HOST</span><span class="chip" data-tag="EITHER">EITHER</span></div>
+        <label class="rlbl"><input type="checkbox" id="steer-research"> research</label>
+        <span style="flex:1"></span>
+        <button class="btn" data-sev="primary" data-action="steer">＋ Add</button>
+      </div>
+      <div id="steer-list" class="ctl-list"></div>
+    </div>
+    <div class="panel c3" data-panel="time-ctl" data-panel-label="Time window" data-tabhidden>
+      <h2>Time window</h2>
+      <div class="sub" id="time-sub">—</div>
+      <div class="btnrow">
+        <button class="btn" data-action="window-add" data-hours="-1">−1h</button>
+        <button class="btn" data-action="window-add" data-hours="1">＋1h</button>
+        <button class="btn" data-action="window-add" data-hours="6">＋6h</button>
+        <input id="time-custom" class="in in-sm" placeholder="±h">
+        <button class="btn" data-action="window-custom">set</button>
+      </div>
+    </div>
+    <div class="panel c3" data-panel="queue-ctl" data-panel-label="Queue" data-tabhidden>
+      <h2>Queue</h2>
+      <div class="sub" id="qc-sub">—</div>
+      <div id="qc-list" class="ctl-list"></div>
+      <div class="field">
+        <input id="qc-text" class="in" placeholder="inject a takeable item at the top…">
+        <div class="chips" id="qc-tags"><span class="chip on" data-tag="">auto</span><span class="chip" data-tag="BOX">BOX</span><span class="chip" data-tag="HOST">HOST</span></div>
+        <button class="btn" data-sev="primary" data-action="queue-inject">Inject</button>
+      </div>
+    </div>
+    <div class="panel c3" data-panel="hw-live" data-panel-label="Box hardware" data-tabhidden>
+      <h2>Box hardware <button class="btn btn-sm" data-action="hw-refresh">⟳ Refresh</button></h2>
+      <div class="sub" id="hw-sub">on-demand only — never auto-polled</div>
+      <div id="hw-body" class="hwgrid"></div>
+    </div>
 
     <!-- concluded-run document -->
     <div class="panel c12" id="conclusion-panel" data-panel="conclusion" data-panel-label="Sealed document" style="display:none">
@@ -876,9 +986,136 @@ let _masonryRAF=0;
 function scheduleMasonry(){ cancelAnimationFrame(_masonryRAF); _masonryRAF=requestAnimationFrame(layoutMasonry); }
 window.addEventListener("resize", scheduleMasonry);
 
+// ══════════ Control page: write-API wiring ══════════
+async function apiPost(action, params){
+  const b=curBox()||{}; const box=b.box_dir||(DATA&&DATA.boxes[0]&&DATA.boxes[0].box_dir);
+  try{
+    const r=await fetch("/action/"+action,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({box,...(params||{})})});
+    return await r.json();
+  }catch(e){ return {ok:false,error:String(e)}; }
+}
+function toast(msg, ok){
+  const t=document.createElement("div"); t.className="toast "+(ok?"ok":"err"); t.textContent=msg;
+  $("toasts").appendChild(t);
+  setTimeout(()=>{ t.style.transition="opacity .3s"; t.style.opacity="0"; setTimeout(()=>t.remove(),300); }, ok?3400:6500);
+}
+let _cfmResolve=null;
+function confirmAction(title, msg, danger){
+  return new Promise(res=>{
+    _cfmResolve=res; $("cfm-title").textContent=title; $("cfm-msg").textContent=msg;
+    const ok=$("cfm-ok"); ok.setAttribute("data-sev", danger?"danger":"primary"); ok.textContent=danger?"Yes, do it":"Confirm";
+    $("confirm-scrim").classList.add("on");
+  });
+}
+function _cfmClose(v){ $("confirm-scrim").classList.remove("on"); if(_cfmResolve){ _cfmResolve(v); _cfmResolve=null; } }
+$("cfm-ok").addEventListener("click",()=>_cfmClose(true));
+$("cfm-cancel").addEventListener("click",()=>_cfmClose(false));
+$("confirm-scrim").addEventListener("click",e=>{ if(e.target.id==="confirm-scrim") _cfmClose(false); });
+
+async function doAction(action, params, opts){
+  opts=opts||{};
+  if(opts.confirm && !(await confirmAction(opts.confirm.title, opts.confirm.msg, opts.confirm.danger))) return {ok:false,cancelled:true};
+  const res=await apiPost(action, params);
+  toast(res.ok ? (res.message || (action+" ✓")) : (res.error || (action+" failed")), res.ok);
+  if(res.ok && action==="hw-refresh" && res.hw) renderHardware(res.hw, true);
+  poll();
+  return res;
+}
+
+// tag-chip selection (steering + queue)
+document.addEventListener("click",e=>{
+  const chip=e.target.closest(".chips .chip");
+  if(chip){ chip.parentElement.querySelectorAll(".chip").forEach(c=>c.classList.remove("on")); chip.classList.add("on"); }
+});
+function pickedTag(id){ const on=document.querySelector("#"+id+" .chip.on"); return on ? (on.dataset.tag||"") : ""; }
+
+// delegated control actions
+document.addEventListener("click", e=>{
+  const btn=e.target.closest("[data-action]"); if(!btn) return;
+  const a=btn.dataset.action;
+  if(a==="steer"){ const t=($("steer-text").value||"").trim(); if(!t) return toast("empty steering note", false);
+    doAction("steer",{text:t,tag:pickedTag("steer-tags")||undefined,research:$("steer-research").checked}).then(r=>{ if(r&&r.ok) $("steer-text").value=""; }); }
+  else if(a==="steer-delete"){ doAction("steer-delete",{n:+btn.dataset.n}); }
+  else if(a==="queue-inject"){ const t=($("qc-text").value||"").trim(); if(!t) return toast("empty queue item", false);
+    doAction("queue-inject",{text:t,tag:pickedTag("qc-tags")||undefined}).then(r=>{ if(r&&r.ok) $("qc-text").value=""; }); }
+  else if(a==="window-add"){ doAction("window-add",{hours:+btn.dataset.hours}); }
+  else if(a==="window-custom"){ const h=parseFloat($("time-custom").value); if(!h) return toast("enter ±hours", false); doAction("window-add",{hours:h}).then(r=>{ if(r&&r.ok) $("time-custom").value=""; }); }
+  else if(a==="pause"){ doAction("pause"); }
+  else if(a==="resume"){ doAction("resume"); }
+  else if(a==="run-start"){ const h=parseFloat($("run-hours")&&$("run-hours").value)||null;
+    doAction("run-start",{hours:h},{confirm:{title:"Start a run?",msg:(h?h+"h":"open")+" window — this spends real weekly cap."}}); }
+  else if(a==="stop-clean"){ doAction("stop",{graceful:true},{confirm:{title:"Clean stop?",msg:"The current unit finishes, then the loop consolidates + writes the FINAL report."}}); }
+  else if(a==="stop-force"){ doAction("stop",{},{confirm:{title:"Force stop?",msg:"Kills the in-flight unit now, then still consolidates + writes the report."}}); }
+  else if(a==="hard-kill"){ doAction("hard-kill",{},{confirm:{title:"HARD KILL",msg:"Terminates the driver + unit immediately with NO consolidate or report. Use only if something is wrong.",danger:true}}); }
+  else if(a==="hw-refresh"){ $("hw-sub").textContent="probing the box…"; doAction("hw-refresh"); }
+});
+
+// ── render the Control page from /data ──
+function fmtAgoShort(ep){ if(!ep) return "—"; const s=Math.max(0,(Date.now()/1000)-ep); return s<90?Math.round(s)+"s":s<5400?Math.round(s/60)+"m":Math.round(s/3600)+"h"; }
+function renderRunControl(b){
+  const st=$("cmd-status"), bt=$("cmd-btns"); if(!st||!bt) return;
+  const a=b.agent||{}, w=b.window||{}, state=(w.state||(b.campaign&&b.campaign.state)||"idle"), paused=!!b.paused, running=state==="running";
+  const pill=paused?"paused":running?"run":(state==="completed"||state==="done")?"done":state==="killed"?"killed":"idle";
+  st.innerHTML=`<span class="st-pill ${pill}"><span class="d"></span>${paused?"Paused":running?"Running":state}</span>`
+    +`<span>${running?("unit #"+(a.current_unit||"?")+" · "+(a.units_completed||0)+"✓/"+(a.units_launched||0)):("last unit "+(a.last_unit?("#"+(a.last_unit.num??"?")):"—"))}</span>`
+    +`<span class="dim">cost win $${(a.cost_window_usd||0).toFixed(2)}</span>`;
+  bt.innerHTML = running
+    ? (paused?`<button class="btn" data-sev="good" data-action="resume">▸ Resume</button>`:`<button class="btn" data-action="pause">⏸ Pause</button>`)
+      +`<button class="btn" data-sev="warn" data-action="stop-clean">◼ Clean stop</button>`
+      +`<button class="btn" data-sev="warn" data-action="stop-force">⏹ Force stop</button>`
+      +`<button class="btn" data-sev="danger" data-action="hard-kill">✕ Hard-kill</button>`
+    : `<input id="run-hours" class="in in-sm" placeholder="hrs" value="18"><button class="btn" data-sev="good" data-action="run-start">▸ Start run</button>`;
+}
+function renderSteerCtl(b){
+  const host=$("steer-list"); if(!host) return; const pend=(b.steering&&b.steering.pending)||[];
+  host.innerHTML = pend.length ? pend.map((n,i)=>
+    `<div class="ctl-row">${n.tag?`<span class="tag">${n.tag}</span>`:""}<span>${escapeHtml(n.title||"")}</span><span class="x" data-action="steer-delete" data-n="${i+1}" title="retract">✕</span></div>`
+  ).join("") : `<div class="ctl-empty">no pending steering — the worker has consumed everything</div>`;
+}
+function renderQueueCtl(b){
+  const host=$("qc-list"), sub=$("qc-sub"); if(!host) return; const q=b.queue||{open:[]};
+  if(sub) sub.textContent=`${q.open.length} open · the top is taken next`;
+  host.innerHTML = q.open.length ? q.open.slice(0,6).map((it,i)=>
+    `<div class="ctl-row">${it.tags&&it.tags.length?`<span class="tag">${it.tags[0]}</span>`:""}<span>${it.id?`[${escapeHtml(it.id)}] `:""}${escapeHtml(it.title||"")}</span>${i===0?'<span class="tag" style="color:var(--accent);border-color:var(--accent)">next</span>':""}</div>`
+  ).join("") : `<div class="ctl-empty">queue empty — a research-refill unit fills it</div>`;
+}
+function renderTimeCtl(b){
+  const sub=$("time-sub"); if(!sub) return; const dl=(b.campaign||{}).deadline_epoch, rem=b.remaining_s;
+  const remStr = rem==null?"—":rem<0?"overdue":(Math.floor(rem/3600)+"h "+Math.floor(rem%3600/60)+"m");
+  sub.innerHTML = dl ? `deadline ${fmtClock(dl)} · <b style="color:var(--accent)">${remStr} left</b>` : "open-ended (no deadline)";
+}
+function renderHardware(hw, fromAction){
+  const host=$("hw-body"), sub=$("hw-sub"); if(!host) return;
+  if(!hw){ host.innerHTML=`<div class="ctl-empty">no probe yet — hit Refresh</div>`; if(sub) sub.textContent="on-demand only — never auto-polled"; return; }
+  const cpu=hw.cpu||{}, mem=hw.mem_mib||{}, gpu=hw.gpu||{}, disks=hw.disk||[];
+  const memPct=mem.total?Math.round((mem.used||0)/mem.total*100):0;
+  const g=(p,cls)=>`<span class="gz ${cls||''}"><span style="width:${Math.min(100,Math.max(0,p||0))}%"></span></span>`;
+  let h="";
+  disks.slice(0,3).forEach(d=>{ const p=parseInt(d.pct)||0; h+=`<div class="hwrow"><span class="k">${escapeHtml((d.mount||"/"))}</span>${g(p,p>85?'bad':p>70?'warn':'')}<span class="v">${d.avail||"?"} free · ${d.pct||"?"}</span></div>`; });
+  h+=`<div class="hwrow"><span class="k">mem</span>${g(memPct,memPct>85?'warn':'')}<span class="v">${((mem.used||0)/1024).toFixed(1)} / ${((mem.total||0)/1024).toFixed(1)} G</span></div>`;
+  if(cpu.load1!=null){ const lp=cpu.cores?Math.min(100,cpu.load1/cpu.cores*100):0; h+=`<div class="hwrow"><span class="k">cpu</span>${g(lp)}<span class="v">${cpu.load1} load${cpu.temp_c!=null&&cpu.temp_c!=="null"?" · "+cpu.temp_c+"°C":""}</span></div>`; }
+  if(gpu.util!=null){ h+=`<div class="hwrow"><span class="k">gpu</span>${g(gpu.util,(gpu.temp||0)>80?'warn':'')}<span class="v">${gpu.util}%${gpu.mem_used!=null?" · "+(gpu.mem_used/1024).toFixed(1)+"G":""}${gpu.temp!=null?" · "+gpu.temp+"°C":""}</span></div>`; }
+  host.innerHTML=h; if(sub) sub.textContent=`updated ${fromAction?"just now":fmtAgoShort(hw.epoch)+" ago"} · on-demand only`;
+}
+function renderCockpit(b){
+  const host=$("cockpit-body"); if(!host) return; const a=b.agent||{}, live=a.live||{};
+  const evs=(live.events||[]).slice(-8).map(e=>{
+    const tool=e.kind==="tool", txt=(e.text||e.description||"").replace(/\s+/g," ").slice(0,96);
+    return `<div><span class="${tool?'c':'m'}">${tool?"$":"◇"}</span> ${escapeHtml(txt)}</div>`;
+  }).join("");
+  host.innerHTML=`<div class="ck-head">${live.running?'<span class="st-pill run"><span class="d"></span>live</span>':'<span class="st-pill idle"><span class="d"></span>idle</span>'}<span>unit #${live.num||a.current_unit||"—"}</span></div>`
+    +`<div class="ck-feed">${evs||'<div class="m">no live unit — the feed streams while a unit runs</div>'}</div>`
+    +`<div class="ck-tiles"><div class="ck-tile"><div class="k">tok/s</div><div class="v">${a.tok_s_window!=null?a.tok_s_window:"—"}</div></div>`
+    +`<div class="ck-tile"><div class="k">out tok</div><div class="v">${fmtTok((a.tokens_window||{}).output||0)}</div></div>`
+    +`<div class="ck-tile"><div class="k">cost win</div><div class="v">$${(a.cost_window_usd||0).toFixed(2)}</div></div>`
+    +`<div class="ck-tile"><div class="k">ctx</div><div class="v">${a.ctx_window?Math.round((a.ctx_peak_window||0)/a.ctx_window*100):0}<small>%</small></div></div></div>`;
+}
+function renderControl(b){ renderRunControl(b); renderSteerCtl(b); renderQueueCtl(b); renderTimeCtl(b); renderCockpit(b); renderHardware(b.hardware_live, false); }
+
 // which section-tab each panel belongs to ("*" = always shown; array = multiple tabs).
 const PANEL_TABS={
   fleet:"*", conclusion:"research",
+  run:"control", cockpit:"control", "steer-ctl":"control", "time-ctl":"control", "queue-ctl":"control", "hw-live":"control",
   window:"overview", ledger:"overview", pareto:["overview","performance"], readout:"overview",
   findings:"overview", hype:"overview", queue:["overview","research"],
   leaderboard:"performance", cpugpu:"performance", depth:"performance", timeline:"performance", models:"performance",
@@ -1764,6 +2001,7 @@ function renderBox(b){
   renderReports(b);
   drawBrag(b);
   $("foot-box").textContent="box: "+(b.nick||"—")+(DATA&&DATA.boxes.length>1?` (${DATA.boxes.length} in fleet)`:"");
+  renderControl(b);
   layoutMasonry();
 }
 
