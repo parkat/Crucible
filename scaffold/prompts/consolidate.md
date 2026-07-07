@@ -1,65 +1,33 @@
-# CRUCIBLE — CONSOLIDATE PROMPT  (wind-down: tidy and seal the window, then STOP)
+# CRUCIBLE — CONSOLIDATE PROMPT (wind-down: tidy, seal, STOP)
 
-You are a Crucible session launched by the external relauncher
-(`scaffold/run_window.sh`) at **wind-down** (deadline approached) or because the queue
-emptied. **Stop generating new hypotheses.** Do not start kernels, downloads, or benches.
-Your whole job is to leave the campaign clean for the next window, then **STOP**.
+Launched by `scaffold/run_window.sh` at wind-down or on an empty queue. **No new work** — no
+hypotheses, kernels, downloads, or benches. Leave the campaign clean for the next window, then **STOP**.
 
-## Your active box
-
-```bash
-export BOX={{BOX}}          # injected by run_window.sh
-```
-
-Every box detail is resolved, never hardcoded (you likely need none here — this is a
-host-side tidy pass):
-
-```bash
-SSH="$(python3 scaffold/boxpaths.py "$BOX" --ssh)"    # only if you must confirm a remote artifact
-```
+`export BOX={{BOX}}` (host-side tidy; resolve any box detail via `scaffold/boxpaths.py`).
 
 ## Orient
+`python3 scaffold/ledger.py front "$BOX/ledger.jsonl"` + `... stats "$BOX/ledger.jsonl"`;
+`cat "$BOX/campaign.json"`; read `"$BOX/MEMORY.md"` and `"$BOX/GATE_QUEUE.md"`.
 
-- `python3 scaffold/ledger.py front "$BOX/ledger.jsonl"` and `... stats "$BOX/ledger.jsonl"`
-  → the live Pareto front and the counts.
-- `cat "$BOX/campaign.json"` → the window's start/deadline and `duration_label`.
-- Read `"$BOX/MEMORY.md"` and `"$BOX/GATE_QUEUE.md"`.
+## Consolidate (make what exists current + consistent — nothing new)
+1. **Reconcile MEMORY.md with the ledger**: fix stale numbers in the headline / Pareto front /
+   tried-and-ruled-out / queue; restate the deadline; remove contradictions.
+   **Keep the head bounded** (units read it every unit): keep only {current phase, queue + takeable
+   top, live Pareto front, last ~3 findings, latest landscape snapshot}; move everything else into
+   `"$BOX/MEMORY_ARCHIVE.md"` (append; prepend a one-line index of what moved). Nothing is lost —
+   units grep the archive on demand.
+2. **Queue clean**: every item resource-tagged `[BOX]`/`[HOST]`/`[EITHER]`, top = one small takeable
+   item, open hypotheses carried with their locate-and-redirect residuals.
+   **Drain `STEERING.md`** — Inbox empty: viable leftover notes → MEMORY queue + move to `## Picked up`
+   (`→ carried to queue`); dead → `## Dropped` with a reason. Keep the Picked up / Dropped history.
+3. **Final report** `"$BOX/reports/FINAL_$(date +%F)_window.md"`: Pareto front + blessed configs,
+   roofline findings, what was ruled out **and what each negative localized the bottleneck to**, open
+   hypotheses for next window. Cite ledger ids.
+4. **GATE_QUEUE.md**: anything awaiting the human is clearly stated.
 
-## Consolidate (no new work — only make what exists current and consistent)
-
-1. **MEMORY.md current + consistent.** Reconcile the headline, the live Pareto front, the
-   tried-and-ruled-out list, and the open-hypotheses queue with what the ledger actually
-   shows. Fix any stale numbers. Restate the deadline. Remove contradictions.
-   - **Keep the head bounded (token-opt).** `MEMORY.md` is the working **head** — units read it
-     in full every unit, so it must stay small. Move anything older than the ~3 most recent
-     research-findings / landscape-snapshot blocks (and superseded queue-state blocks) out of
-     `MEMORY.md` into `"$BOX/MEMORY_ARCHIVE.md"` (append; prepend a one-line index of what moved).
-     The head always keeps: current phase, queue + TAKEABLE-NOW top, live Pareto front, the last
-     ~3 findings, and the latest landscape snapshot. Nothing is lost — units `grep` the archive on
-     demand.
-2. **Queue clean + tagged + takeable-top.** Every open item carries a resource tag
-   (`[BOX]`/`[HOST]`/`[EITHER]`); the **top is a single small takeable item** so the next
-   window starts instantly. Carry forward open hypotheses with their locate-and-redirect
-   residuals.
-   - **Drain `STEERING.md`.** Leave its Inbox **empty** so the next window starts clean: any
-     still-unprocessed operator note that remains viable → carry into the MEMORY.md queue
-     (tagged, takeable) and move it to **Picked up** (`→ carried to queue`); dead ones → move
-     to **Dropped** with a reason. Keep the Picked up / Dropped history intact.
-3. **Final report.** Write `"$BOX/reports/FINAL_$(date +%F)_window.md"`: the Pareto front and
-   blessed configs, the roofline findings, what was ruled out **and what each negative
-   localized the bottleneck to**, and the open hypotheses for next window. Cite ledger ids.
-4. **GATE_QUEUE.md** — make sure anything awaiting the human is clearly stated.
-
-## Seal and STOP
-
+## Seal + STOP
 ```bash
-git -C "$BOX" add -A && git -C "$BOX" commit -m "consolidate <date> window: MEMORY current, queue takeable, FINAL report"
+git -C "$BOX" add -A && git -C "$BOX" commit -m "consolidate <date>: MEMORY current, queue takeable, FINAL report"
 ```
-
-The relauncher sets `campaign.json.state = "completed"` after you exit. Do **not** launch
-another unit. Tidy, commit, **STOP**.
-
-> Wind-down surfaces this in the dashboard: once `state = "completed"` the host monitor
-> renders the sealed `MEMORY.md` in its **"Window concluded — sealed document"** panel, so
-> the document this run leaves behind shows up in the window the moment it ends. A
-> well-reconciled MEMORY.md (step 1) is therefore the closing artifact a human reads first.
+The relauncher sets `campaign.json.state="completed"` after you exit (the dashboard then renders the
+sealed MEMORY.md as the closing document). Do not launch another unit. **STOP.**
