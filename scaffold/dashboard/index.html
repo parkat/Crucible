@@ -533,6 +533,97 @@
   .ck svg{width:12px; height:12px}
   .dw-reset{margin-top:2px; align-self:flex-start; font-family:var(--sans); font-size:12px; color:var(--ink-dim); background:none; border:1px solid var(--hair); border-radius:8px; padding:8px 14px; cursor:pointer; transition:border-color .15s, color .15s}
   .dw-reset:hover{border-color:var(--oxblood); color:var(--oxblood)}
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     SYSTEM 3.0 THEME — classic Macintosh Finder skin over the live dashboard.
+     Appended last so it wins the cascade; a self-contained block. To REVERT:
+     delete this block + the paired <script id="sys3-skin">, or restore
+     scaffold/dashboard/index.pre-system3.backup.html. Monochrome by design;
+     the existing light/dark toggle drives light = black-on-white, dark = inverted.
+     ══════════════════════════════════════════════════════════════════════════ */
+  :root, html[data-theme="light"]{
+    --paper:#fff; --panel:#fff; --panel-2:#fff; --well:#fff;
+    --hair:#000; --hair-soft:#000; --rule:#000;
+    --grid:#cfcfcf; --grid-hi:#b2b2b2;
+    --ink:#000; --ink-dim:#000; --ink-faint:#5a5a5a;
+    --accent:#000; --accent-soft:#000; --accent-ring:rgba(0,0,0,.16);
+    --amber:#000; --amber-soft:#555;
+    --cyan:#555; --oxblood:#111; --violet:#8a8a8a; --fail:#bdbdbd;
+    --arch-transformer:#000; --arch-transformer-kvq:#777; --arch-conv-hybrid:#333; --arch-recurrent:#aaa;
+    --shadow:1px 1px 0 #000, 2px 2px 0 #000; --sel:rgba(0,0,0,.10);
+  }
+  html[data-theme="dark"]{
+    --paper:#000; --panel:#000; --panel-2:#000; --well:#000;
+    --hair:#fff; --hair-soft:#fff; --rule:#fff;
+    --grid:#3a3a3a; --grid-hi:#565656;
+    --ink:#fff; --ink-dim:#fff; --ink-faint:#9a9a9a;
+    --accent:#fff; --accent-soft:#fff; --accent-ring:rgba(255,255,255,.16);
+    --amber:#fff; --amber-soft:#aaa;
+    --cyan:#aaa; --oxblood:#eee; --violet:#8a8a8a; --fail:#444;
+    --arch-transformer:#fff; --arch-transformer-kvq:#aaa; --arch-conv-hybrid:#ccc; --arch-recurrent:#777;
+    --shadow:1px 1px 0 #fff, 2px 2px 0 #fff; --sel:rgba(255,255,255,.12);
+  }
+  html[data-accent]{ --accent:var(--ink); --accent-soft:var(--ink-dim); --amber:var(--ink); --arch-conv-hybrid:var(--ink-dim); --accent-ring:rgba(128,128,128,.15); --sel:rgba(128,128,128,.12); }
+  :root{
+    --mono:"Monaco","Andale Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+    --sans:"Geneva","Helvetica Neue",Verdana,Tahoma,sans-serif;
+    --serif:"ChicagoFLF","Chicago","Charcoal","Geneva",system-ui,sans-serif;
+    --pad:16px;
+  }
+  body{ -webkit-font-smoothing:none; font-smooth:never; background-color:var(--paper);
+    background-image:repeating-conic-gradient(var(--ink) 0% 25%, var(--paper) 0% 50%); background-size:2px 2px; background-attachment:fixed; }
+  ::selection{ background:var(--ink); color:var(--paper); }
+
+  /* masthead → menu-bar plate */
+  .strip{ background:var(--paper); border:1px solid var(--ink); box-shadow:var(--shadow); border-radius:0; padding:8px 12px; align-items:center }
+  .brand b{ font-family:var(--serif); font-weight:700; font-size:20px; letter-spacing:0 }
+  .brand .nick{ font-family:var(--mono); color:var(--ink) }
+  .chip, .chip.tier{ font-family:var(--mono); color:var(--ink); border-left:0 }
+  .chip.tier{ font-weight:700 } .chip.tier::before{ content:"·"; margin-right:9px }
+  .clock .t{ font-family:var(--mono) } .clock .t.open{ color:var(--ink) }
+  .live{ color:var(--ink) } .dot{ background:var(--ink); border-radius:0 } .dot.beat{ animation:none }
+  .tgl{ width:26px; height:26px; border-radius:0; border:1px solid var(--ink); background:var(--paper); color:var(--ink) }
+  .tgl:hover{ background:var(--ink); color:var(--paper) }
+
+  /* tab bar → classic file-tab strip */
+  .tabbar{ border-bottom:2px solid var(--ink); gap:4px; padding:0 }
+  .tabbar .tab{ font-family:var(--serif); font-weight:700; font-size:12px; color:var(--ink); background:var(--paper);
+    border:1px solid var(--ink); border-bottom:0; border-radius:7px 7px 0 0; padding:5px 13px; box-shadow:none }
+  .tabbar .tab:hover{ background:var(--ink); color:var(--paper) }
+  .tabbar .tab.on{ background:var(--ink); color:var(--paper); border-color:var(--ink); box-shadow:none }
+
+  /* panels → Mac windows (pinstripe title bar + close/zoom boxes) */
+  .panel{ background:var(--paper); border:1px solid var(--ink); border-radius:0; box-shadow:var(--shadow); padding:var(--pad) }
+  .panel > h2{ position:relative; margin:calc(var(--pad)*-1) calc(var(--pad)*-1) 12px; height:20px; padding:0;
+    border-bottom:1px solid var(--ink); display:flex; align-items:center; justify-content:center;
+    font-family:var(--serif); font-weight:700; font-size:13px; letter-spacing:0;
+    background:repeating-linear-gradient(to bottom, var(--ink) 0 1px, var(--paper) 1px 2px) }
+  .panel > h2 .wt{ background:var(--paper); padding:0 10px; position:relative; z-index:1 }
+  .panel > h2::before{ content:""; position:absolute; left:6px; top:50%; transform:translateY(-50%); width:11px; height:11px; background:var(--paper); border:1px solid var(--ink) }
+  .panel > h2::after{ content:""; position:absolute; right:6px; top:50%; transform:translateY(-50%); width:11px; height:11px; background:var(--paper); border:1px solid var(--ink) }
+  .sub{ color:var(--ink-faint); font-family:var(--sans) }
+
+  /* controls → classic Mac push-buttons / fields */
+  .btn{ font-family:var(--serif); font-weight:700; border-radius:9px; border:1px solid var(--ink); background:var(--paper); color:var(--ink) }
+  .btn:hover{ background:var(--ink); color:var(--paper) } .btn[data-sev]{ color:var(--ink) }
+  .cmd-right .btn[data-sev]{ background:var(--paper); color:var(--ink); border:1px solid var(--ink) }
+  .cmd-right .btn[data-sev=danger]{ box-shadow:0 0 0 2px var(--paper), 0 0 0 3px var(--ink) }
+  .cmd-right .btn:hover{ background:var(--ink); color:var(--paper) }
+  .in{ font-family:var(--mono); border:1px solid var(--ink); border-radius:0; background:var(--paper); color:var(--ink) }
+  .chip{ border-radius:6px; border:1px solid var(--ink); color:var(--ink) }
+  .chip.on{ background:var(--ink); color:var(--paper); border-color:var(--ink) }
+  .st-pill{ border-radius:0; border:1px solid var(--ink); background:var(--paper); color:var(--ink) }
+  .st-pill .d, .st-pill .dot{ border-radius:0; background:var(--ink) }
+  .cmdbar{ border-radius:0; border:1px solid var(--ink); box-shadow:var(--shadow) }
+  .gz, .gauge{ border:1px solid var(--ink); border-radius:0; background:repeating-linear-gradient(45deg,var(--ink) 0 1px,var(--paper) 1px 3px) }
+  .gz>span, .gauge>span{ background:var(--ink) }
+
+  /* wells / overlays / toasts */
+  .plotwell{ background:var(--paper); border-radius:0 }
+  .toast{ border-radius:0; border:1px solid var(--ink); box-shadow:var(--shadow) }
+  .cfm{ border-radius:0; border:1px solid var(--ink); box-shadow:var(--shadow) }
+  a.rep{ border:1px solid var(--ink); border-radius:0; background:var(--paper) }
+  a.rep:hover{ background:var(--ink) } a.rep:hover *{ color:var(--paper) }
 </style>
 </head>
 <body>
@@ -1017,7 +1108,7 @@ async function doAction(action, params, opts){
   if(opts.confirm && !(await confirmAction(opts.confirm.title, opts.confirm.msg, opts.confirm.danger))) return {ok:false,cancelled:true};
   const res=await apiPost(action, params);
   toast(res.ok ? (res.message || (action+" ✓")) : (res.error || (action+" failed")), res.ok);
-  if(res.ok && action==="hw-refresh" && res.hw) renderHardware(res.hw, true);
+  if(res.ok && action==="hw-refresh" && res.hw) renderHwLive(res.hw, true);
   poll();
   return res;
 }
@@ -1084,7 +1175,7 @@ function renderTimeCtl(b){
   const remStr = rem==null?"—":rem<0?"overdue":(Math.floor(rem/3600)+"h "+Math.floor(rem%3600/60)+"m");
   sub.innerHTML = dl ? `deadline ${fmtClock(dl)} · <b style="color:var(--accent)">${remStr} left</b>` : "open-ended (no deadline)";
 }
-function renderHardware(hw, fromAction){
+function renderHwLive(hw, fromAction){
   const host=$("hw-body"), sub=$("hw-sub"); if(!host) return;
   if(!hw){ host.innerHTML=`<div class="ctl-empty">no probe yet — hit Refresh</div>`; if(sub) sub.textContent="on-demand only — never auto-polled"; return; }
   const cpu=hw.cpu||{}, mem=hw.mem_mib||{}, gpu=hw.gpu||{}, disks=hw.disk||[];
@@ -1110,7 +1201,7 @@ function renderCockpit(b){
     +`<div class="ck-tile"><div class="k">cost win</div><div class="v">$${(a.cost_window_usd||0).toFixed(2)}</div></div>`
     +`<div class="ck-tile"><div class="k">ctx</div><div class="v">${a.ctx_window?Math.round((a.ctx_peak_window||0)/a.ctx_window*100):0}<small>%</small></div></div></div>`;
 }
-function renderControl(b){ renderRunControl(b); renderSteerCtl(b); renderQueueCtl(b); renderTimeCtl(b); renderCockpit(b); renderHardware(b.hardware_live, false); }
+function renderControl(b){ renderRunControl(b); renderSteerCtl(b); renderQueueCtl(b); renderTimeCtl(b); renderCockpit(b); renderHwLive(b.hardware_live, false); }
 
 // which section-tab each panel belongs to ("*" = always shown; array = multiple tabs).
 const PANEL_TABS={
@@ -2041,6 +2132,14 @@ initTabs();
 applyPrefs();
 poll();
 setInterval(poll,4000);
+</script>
+<script id="sys3-skin">
+/* System 3.0 skin — wrap each panel title in a nameplate so it reads over the pinstripe title bar.
+   Paired with the "SYSTEM 3.0 THEME" CSS block; delete both (or restore the backup) to revert. */
+(function(){
+  function wrap(){ document.querySelectorAll(".panel > h2").forEach(function(h){ if(!h.querySelector(".wt")) h.innerHTML='<span class="wt">'+h.innerHTML+'</span>'; }); }
+  wrap();
+})();
 </script>
 </body>
 </html>

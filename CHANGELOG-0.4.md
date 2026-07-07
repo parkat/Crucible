@@ -85,6 +85,23 @@ The read-only dashboard gains a write layer (localhost-only) and a **Control tab
   action; state driven by a new `/data` `paused`/`hardware_live`. Verified in-browser end-to-end (a
   steering add→retract round-trip through the live server; no console errors).
 
+### System 3.0 skin — classic Macintosh dashboard theme
+A monochrome re-skin of the live dashboard in the classic Mac **System 3.0 Finder** style (from a
+UI-kit reference), applied after a mockup pass. Contained + fully reversible:
+- **Theme layer** appended to `index.html` — a clearly delimited `SYSTEM 3.0 THEME` CSS block + a
+  paired `<script id="sys3-skin">`. It remaps the design tokens to B&W (the existing light/dark toggle
+  now drives black-on-white vs inverted white-on-black), swaps in Chicago / Geneva / Monaco type + a
+  dither desktop, and restyles panels as Mac windows (pinstripe title bars with close/zoom boxes, hard
+  1px drop shadows), tabs as file tabs, and controls as classic push-buttons / fields / gauges. Charts
+  inherit B&W through the tokens.
+- **Backup**: `scaffold/dashboard/index.pre-system3.backup.html` (the prior Precision-Lab style),
+  **gitignored**. Revert = restore it, or delete the two System-3 blocks.
+- **Latent bug fixed en route**: the Control page's `renderHardware(hw, fromAction)` collided by name
+  with the base `renderHardware(box)` (last declaration wins), so once `hardware_live` was populated
+  `renderControl` invoked the wrong one and threw (`hw.cpu.replace`), stalling every poll behind the
+  loading overlay. Renamed the Control-page one to `renderHwLive`. Verified in-browser: both themes
+  render with real data, overlay clears, no console errors.
+
 ## Verification done
 - `window.py` — functional test (status / add-hours ± / stop / --graceful / guardrails / open-ended).
 - `run_window.sh` — `bash -n` + dry-run intact.
