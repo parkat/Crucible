@@ -54,6 +54,23 @@ Input tokens are paid on every unit; this pass cuts the per-unit read ~half.
 - Deferred: doctrine prose compression (low leverage post-grep-on-demand); moving the flags block +
   snapshot to a grep-on-demand reference file (would take the head to ~6–7k).
 
+### Dashboard restructure + fixes — `375f725`, `e8ce4d7`
+- **Load time**: `_agent` re-scanned all 1,097 unit files (266MB) per request (~10–30s). Memoized per-file
+  parse; completed units are immutable so they return without a stat() (the win on WSL/DrvFs) →
+  **warm polls 10s→0.24s**. Cold first-load covered by a theme-aware **loading overlay**.
+- **Queue panel** (was empty): parser only matched the template `## Open hypotheses` + `- ` bullets, but
+  the live head uses `### Queue (takeable top)` with a `1. **K235**` numbered/bold format. Rewrote it
+  robust to `##`/`###` headers, numbered/bulleted/arrow items, bracket-or-bold ids → 5 items, K235 top.
+- **Research panel**: replaced stale `front_stall_K` copy with the real triggers (queue-empty refill /
+  novelty pivot); it was data-correct-empty, just mislabeled.
+- **Full viz inspection**: 20/22 panels healthy; only the queue was genuinely broken (timeline/ledger use
+  CSS bars, not SVG — false alarms).
+- **Density restructure**: tab bar (Overview / Performance / Research & Queue / Cost & Tokens / System /
+  All) + **click-to-collapse** on every panel; **Overview = curated 7-panel landing** (was 22). Tab +
+  collapse state persist in localStorage; active tab is URL-routable (`#performance`). Built on the
+  existing prefs/drawer.
+- **Deferred**: interactive/write API (design TBD); dashboard style-bible refresh (later).
+
 ## Verification done
 - `window.py` — functional test (status / add-hours ± / stop / --graceful / guardrails / open-ended).
 - `run_window.sh` — `bash -n` + dry-run intact.
