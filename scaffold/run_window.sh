@@ -98,6 +98,17 @@ render() { sed "s|{{BOX}}|$BOX|g" "$1"; }
 # trigger, which churned research while a non-empty queue still had takeable work.
 REFILL_MIN="${CRUCIBLE_REFILL_MIN:-5}"
 
+# ---- anti-rabbit-hole: novelty pivot when an avenue goes stale (operator standing policy) ----------
+# If the CURRENT avenue of exploration has been ground for >= NOVELTY_PIVOT_K K-items (measured as
+# distinct K-ids in ledger notes, else record count) since the last NEW blessed config OR since the
+# last pivot — whichever is more recent — the relauncher spends ONE unit ABANDONING that avenue: it
+# declares it dead, GARBAGE-COLLECTS its failed on-disk experiments (box + host), then researches and
+# refills the queue with a genuinely NOVEL avenue. This keeps one dead-end thread (e.g. a quant-bridge
+# bug hunt) from eating an entire window without ever producing a serveable/blessed config. The loop
+# focuses serially on one dominant avenue, so "K-items since last win, reset on each deliberate pivot"
+# is a robust proxy for "this avenue has been ground N items with nothing to show".
+NOVELTY_PIVOT_K="${CRUCIBLE_NOVELTY_PIVOT_K:-100}"
+
 render_research_refill() {
   cat <<EOF
 ‼ QUEUE EMPTY — RESEARCH-REFILL UNIT (injected by run_window.sh: the takeable queue is empty).
@@ -114,6 +125,97 @@ For THIS unit ONLY, run a web-research phase per doctrine/03 to REFILL the queue
   - **THEN clear the empty-queue sentinel so grinding resumes:** \`rm -f "${BOX}/work/QUEUE_EMPTY"\`.
     ONLY if you genuinely cannot find ${REFILL_MIN} tractable directions, LEAVE the sentinel in
     place — the relauncher will then consolidate and end the campaign.
+  Do NOT bench on this unit. Then STOP.
+
+--- the standard unit contract follows (format, gating, recording, resolver use) ---
+EOF
+  render "$1"
+}
+
+# where the driver remembers the ledger length at the last pivot (resets the staleness baseline so a
+# fresh avenue gets its own full NOVELTY_PIVOT_K budget before it can be declared a rabbit hole too).
+PIVOT_STATE="$BOX/work/last_pivot.json"
+
+# avenue_metrics — echoes "<avenue_len> <total_records> <dominant_model>":
+#   avenue_len  = K-items ground on the CURRENT avenue (distinct K-ids in notes since the later of the
+#                 last blessed record and the last pivot; falls back to a record count if no K-ids).
+#   dominant    = the model most frequently recorded on this avenue (names the thread to declare dead).
+# Robust to a missing/empty/torn ledger and a missing pivot-state file (echoes "0 0 ").
+avenue_metrics() {
+  python3 - "$BOX/ledger.jsonl" "$PIVOT_STATE" <<'PY' 2>/dev/null || echo "0 0 "
+import json, sys, re
+from collections import Counter
+led, pivot_state = sys.argv[1], sys.argv[2]
+recs = []
+try:
+    for ln in open(led, encoding="utf-8", errors="ignore"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            recs.append(json.loads(ln))
+        except Exception:
+            pass
+except OSError:
+    pass
+total = len(recs)
+bpos = -1
+for i, r in enumerate(recs):
+    if r.get("status") == "blessed":
+        bpos = i
+try:
+    last_pivot_len = int(json.load(open(pivot_state)).get("ledger_len_at_pivot", 0))
+except Exception:
+    last_pivot_len = 0
+base = max(bpos + 1, last_pivot_len)
+avenue = recs[base:]
+kids = set()
+for r in avenue:
+    for m in re.findall(r"\bK(\d+)\b", r.get("notes", "") or ""):
+        kids.add(int(m))
+alen = len(kids) if kids else len(avenue)
+# name the CURRENT thread from the most recent avenue records (what the loop is stuck on NOW),
+# not the whole-avenue mode (which skews to an older sub-thread with more records).
+models = Counter((r.get("config") or {}).get("model", "") for r in avenue[-25:] if (r.get("config") or {}).get("model"))
+dom = models.most_common(1)[0][0] if models else ""
+print(alen, total, dom)
+PY
+}
+
+render_novelty_pivot() {   # $1 = unit prompt ; $2 = dominant stale model/thread ; $3 = avenue length (K-items)
+  cat <<EOF
+‼ ANTI-RABBIT-HOLE / NOVELTY PIVOT — injected by run_window.sh (operator standing policy).
+The CURRENT avenue of exploration has been ground for **$3 K-items with NO new blessed config**
+(threshold ${NOVELTY_PIVOT_K}); its dominant thread is: **${2:-<identify from MEMORY.md "Current phase">}**.
+ABANDON this avenue for THIS unit and pivot to a genuinely NOVEL one. Do NOT continue the stale thread;
+do NOT bench it. This one unit does, in order:
+
+  1. DECLARE THE STALE AVENUE DEAD. Confirm the dominant avenue above against MEMORY.md's "Current
+     phase" + the ledger's recent records. Move its open queue items and its current-phase thread into
+     "Tried & ruled out", each with a one-line locate-and-redirect residual, then REMOVE those items
+     from the takeable queue so no later unit resumes them.
+  2. CLEAN UP ITS FAILED EXPERIMENTS (free disk on BOTH resources). Using MEMORY's tried-and-ruled-out
+     list + the ledger's failed/degenerate/couldnt_load records for this avenue, delete the dead
+     on-disk artifacts it left behind — staged model files, dequant/bridge scratch, work/ temp — on the
+     [HOST] sandbox and, if it holds reclaimable disk, the [BOX] (wake it only if needed; resolve every
+     path via scaffold/boxpaths.py, NEVER hardcode a host/path). Report bytes freed per resource.
+     HARD SAFETY RAILS — NEVER delete: anything under "$BOX/blessed/", the ledger, MEMORY*.md, git
+     history/.git, the hardware/connection/campaign json, or any file MEMORY flags as live/reused
+     provenance or a reference for a STILL-OPEN thread. When unsure about a file, LEAVE IT and note it —
+     a missed cleanup is cheap; a deleted blessed config or reference is not.
+  3. RESEARCH A GENUINELY NOVEL AVENUE (doctrine/03 web-research phase; no benching). It MUST be
+     materially different from the avenue you just killed AND from everything already in
+     "Tried & ruled out" — a different architecture family / engine / technique, not a re-skin of the
+     dead thread. FIRST fold in any operator notes from "$BOX/STEERING.md" (Inbox) and empty them per
+     the steering invariant — a human-pointed front outranks an automated search direction. Refresh
+     MEMORY's dated landscape snapshot with what you find.
+  4. REFILL THE QUEUE with **AT LEAST ${REFILL_MIN}** NEW small, takeable, resource-tagged
+     ([BOX]/[HOST]/[EITHER]) hypotheses for the NOVEL avenue — a single small takeable item at the top.
+  5. LOG a ledger record for the pivot (a null/contender result is fine — it IS research output: what
+     died, what disk was reclaimed, what novel avenue replaces it) and COMMIT the box repo.
+  6. CLEAR the empty-queue sentinel if present: \`rm -f "$BOX/work/QUEUE_EMPTY"\`. ONLY if you truly
+     cannot find ${REFILL_MIN} tractable NOVEL directions, LEAVE the sentinel in place (\`touch
+     "$BOX/work/QUEUE_EMPTY"\`) — the relauncher then consolidates and ends the campaign.
   Do NOT bench on this unit. Then STOP.
 
 --- the standard unit contract follows (format, gating, recording, resolver use) ---
@@ -236,6 +338,11 @@ if [ "$DRY" -eq 1 ]; then
     echo "  model routing = research/consolidate=$SONNET ; [BOX]-idle bench=$OPUS ; else=$SONNET"
     echo "  would invoke  : $(claude_cmd "$UNIT_PROMPT" "$(pick_model unit)")"
     echo "  sentinel      = $SENTINEL (empty queue -> research refill >= $REFILL_MIN, not early-exit)"
+    read -r DR_AVLEN DR_TOT DR_DOM < <(avenue_metrics)
+    echo "  novelty-pivot = current avenue $DR_AVLEN K-items since last blessed/pivot (dom='$DR_DOM'); threshold $NOVELTY_PIVOT_K"
+    if [ "${DR_AVLEN:-0}" -ge "$NOVELTY_PIVOT_K" ]; then
+      echo "                  -> NEXT UNIT WOULD PIVOT: abandon '${DR_DOM:-current avenue}', GC its dead experiments, research+refill a NOVEL avenue"
+    fi
   fi
   echo   "  bg wait ceiling (ms) = $CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"
   exit 0
@@ -255,10 +362,26 @@ while : ; do
   fi
   UNIT=$(( UNIT + 1 ))
   UNIT_FILE="$LOGDIR/unit_$(date +%s)_$UNIT.jsonl"
-  # research is gated behind an EMPTY QUEUE: the worker writes the QUEUE_EMPTY sentinel when the
-  # takeable queue is empty; that unit is spent refilling it (>= REFILL_MIN items) and clearing
-  # the sentinel. Otherwise, grind the queue top.
-  if [ -f "$SENTINEL" ]; then
+  # Unit routing, in PRECEDENCE order:
+  #   (1) NOVELTY PIVOT — the current avenue has been ground >= NOVELTY_PIVOT_K K-items with no new
+  #       blessed config: abandon it, GC its dead experiments, research+refill a novel avenue. This
+  #       OUTRANKS grinding and the empty-queue refill, because a stale avenue can still have a full
+  #       (but dead-end) queue — that is exactly the rabbit hole this guards against.
+  #   (2) RESEARCH REFILL — the queue emptied (QUEUE_EMPTY sentinel): refill >= REFILL_MIN and clear it.
+  #   (3) GRIND — take the queue top.
+  THIS_RESEARCH=0; THIS_PIVOT=0
+  read -r AVENUE_LEN TOTAL_REC DOM_MODEL < <(avenue_metrics)
+  if [ "${AVENUE_LEN:-0}" -ge "$NOVELTY_PIVOT_K" ]; then
+    THIS_PIVOT=1
+    MODEL="$(pick_model research)"        # a research/cleanup unit, not a bench -> research-class model
+    echo "run_window: $(date -Is) launch unit #$UNIT [NOVELTY PIVOT — avenue stale ${AVENUE_LEN} K-items >= $NOVELTY_PIVOT_K w/o new blessed; dom='${DOM_MODEL}'] [model=$MODEL]" | tee -a "$LOG"
+    render_novelty_pivot "$UNIT_PROMPT" "$DOM_MODEL" "$AVENUE_LEN" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
+      > "$UNIT_FILE" 2>>"$LOG" \
+      || echo "run_window: $(date -Is) unit #$UNIT (novelty-pivot) exited non-zero (logged; continuing)" | tee -a "$LOG"
+    # reset the staleness baseline to now so the FRESH avenue gets its own full NOVELTY_PIVOT_K budget
+    # before it too can be declared a rabbit hole (prevents re-pivoting every unit while it ramps).
+    python3 -c "import json,sys;open('$PIVOT_STATE','w').write(json.dumps({'ledger_len_at_pivot': ${TOTAL_REC:-0}}))" 2>>"$LOG" || true
+  elif [ -f "$SENTINEL" ]; then
     THIS_RESEARCH=1
     MODEL="$(pick_model research)"
     echo "run_window: $(date -Is) launch unit #$UNIT [RESEARCH — queue empty, refill >= $REFILL_MIN] [model=$MODEL]" | tee -a "$LOG"
@@ -266,7 +389,6 @@ while : ; do
       > "$UNIT_FILE" 2>>"$LOG" \
       || echo "run_window: $(date -Is) unit #$UNIT (research) exited non-zero (logged; continuing)" | tee -a "$LOG"
   else
-    THIS_RESEARCH=0
     MODEL="$(pick_model unit)"
     echo "run_window: $(date -Is) launch unit #$UNIT [model=$MODEL]" | tee -a "$LOG"
     render "$UNIT_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
@@ -283,11 +405,11 @@ while : ; do
     sleep "$SLEEP"
     continue
   fi
-  # empty-queue exhaustion guard: a research-refill unit MUST push >= REFILL_MIN items and clear
+  # exhaustion guard: a research-refill OR a novelty-pivot unit MUST push >= REFILL_MIN items and clear
   # the sentinel. If it ran (not a limit no-op) yet the sentinel is STILL present, the campaign is
-  # genuinely out of tractable directions -> consolidate.
-  if [ "$THIS_RESEARCH" -eq 1 ] && [ -f "$SENTINEL" ]; then
-    echo "run_window: $(date -Is) research refill left the queue empty -> consolidate (campaign exhausted)" | tee -a "$LOG"
+  # genuinely out of tractable directions (even a novel avenue couldn't be found) -> consolidate.
+  if { [ "$THIS_RESEARCH" -eq 1 ] || [ "$THIS_PIVOT" -eq 1 ]; } && [ -f "$SENTINEL" ]; then
+    echo "run_window: $(date -Is) research/pivot refill left the queue empty -> consolidate (campaign exhausted)" | tee -a "$LOG"
     break
   fi
 done
