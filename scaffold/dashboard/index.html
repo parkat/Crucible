@@ -380,6 +380,25 @@
   /* ── spend ── */
   .spend-foot{display:flex; justify-content:space-between; gap:12px; margin-top:10px; font-family:var(--mono); font-size:10px; color:var(--ink-faint)}
   .spend-foot b{color:var(--ink); font-weight:600}
+  /* token telemetry + context ingest (v0.4) */
+  .tele{margin-top:11px; display:flex; flex-direction:column; gap:9px}
+  .tele-tiles{display:grid; grid-template-columns:repeat(4,1fr); gap:7px}
+  .tele-tile{border:1px solid var(--grid); border-radius:8px; padding:6px 8px}
+  .tele-tile .k{font-family:var(--mono); font-size:8.5px; letter-spacing:.4px; text-transform:uppercase; color:var(--ink-faint)}
+  .tele-tile .v{font-family:var(--mono); font-size:15px; font-weight:600; color:var(--ink); margin-top:2px}
+  .tele-tile .v small{font-size:9px; color:var(--ink-faint); font-weight:400}
+  .tele-row{display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:10px; color:var(--ink-faint)}
+  .tele-row .lbl{flex:0 0 66px; color:var(--ink-dim)}
+  .tele-bar{flex:1; height:7px; border-radius:4px; background:var(--grid); overflow:hidden}
+  .tele-bar > span{display:block; height:100%; border-radius:4px; background:var(--accent); opacity:.85}
+  .tele-row .val{flex:0 0 100px; text-align:right; color:var(--ink)}
+  .mdl-split{display:flex; flex-direction:column; gap:5px}
+  .ingest-list{margin-top:9px; display:flex; flex-direction:column; gap:5px; max-height:250px; overflow:auto}
+  .ing-row{display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:10px}
+  .ing-row .f{flex:0 0 44%; color:var(--ink-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .ing-row .b{flex:1; height:6px; border-radius:3px; background:var(--grid); overflow:hidden}
+  .ing-row .b > span{display:block; height:100%; background:var(--accent); opacity:.8}
+  .ing-row .t{flex:0 0 54px; text-align:right; color:var(--ink)}
 
   /* ── customize drawer ── */
   .scrim{position:fixed; inset:0; background:rgba(20,18,13,.4); opacity:0; pointer-events:none; transition:opacity .25s ease; z-index:40}
@@ -547,12 +566,20 @@
       <div class="plotwell"><div id="cpugpu-plot"></div></div>
     </div>
 
-    <!-- spend (new) -->
-    <div class="panel c6" data-panel="spend" data-panel-label="Spend / units">
-      <h2>Spend &amp; units</h2>
-      <div class="sub" id="spend-sub">cost per recent unit · driven by the ledger</div>
+    <!-- spend + token telemetry (v0.4) -->
+    <div class="panel c6" data-panel="spend" data-panel-label="Spend &amp; tokens">
+      <h2>Spend &amp; tokens</h2>
+      <div class="sub" id="spend-sub">cost per recent unit · token breakdown below</div>
       <div class="plotwell"><div id="spend-plot"></div></div>
       <div class="spend-foot" id="spend-foot"></div>
+      <div class="tele" id="spend-tele"></div>
+    </div>
+
+    <!-- context ingest cost (v0.4) -->
+    <div class="panel c6" data-panel="ingest" data-panel-label="Context ingest cost">
+      <h2>Context ingest cost</h2>
+      <div class="sub" id="ingest-sub">approx tokens to read each key file into context · chars/4 estimate</div>
+      <div class="ingest-list" id="ingest-list"></div>
     </div>
 
     <!-- depth -->
@@ -1011,42 +1038,80 @@ function drawCpuGpu(b){
   host.innerHTML=s;
 }
 
-// ── spend / units (new) ──
+// ── spend + token telemetry (v0.4) ──
+function fmtTok(n){ n=n||0; return n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":String(Math.round(n)); }
+
 function drawSpend(b){
   const a=b.agent||{}, host=$("spend-plot"), sub=$("spend-sub"), foot=$("spend-foot");
-  sub.textContent="cost per recent unit · driven by the ledger";
+  sub.textContent="cost per recent unit · token breakdown below";
   const us=(a.recent_units||[]).filter(u=>u.cost!=null && u.has_result);
-  foot.innerHTML=`<span>this window <b>$${(a.cost_window_usd||0).toFixed(2)}</b></span>`
-    +`<span>all-time <b>$${(a.cost_all_usd||0).toFixed(2)}</b></span>`
-    +`<span>units <b>${a.units_completed||0}✓ / ${a.units_launched||0}</b></span>`;
-  if(!us.length){ host.innerHTML='<div class="empty" style="min-height:150px"><div class="big">No completed units yet</div></div>'; return; }
-  const cMono=C('--mono'), cFaint=C('--ink-faint'), cDim=C('--ink-dim'), cGrid=C('--grid'), cAcc=C('--accent'), cOx=C('--oxblood');
-  const W=580, H=190, ml=40, mr=14, mt=16, mb=34;
-  const plotW=W-ml-mr, plotH=H-mt-mb;
-  const cmax=Math.max(...us.map(u=>u.cost))*1.15 || 1;
-  const avg=us.reduce((s,u)=>s+u.cost,0)/us.length;
-  const bw=Math.min(46, plotW/us.length*0.62);
-  const gap=(plotW-bw*us.length)/(us.length+1);
-  const y=v=> mt+plotH-(v/cmax)*plotH;
-  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="cost per unit">`;
-  for(let i=0;i<=3;i++){ const cv=cmax*i/3, yy=y(cv);
-    s+=`<line x1="${ml}" y1="${yy}" x2="${W-mr}" y2="${yy}" stroke="${cGrid}"/>`;
-    s+=`<text x="${ml-7}" y="${yy+3}" fill="${cFaint}" font-size="9" font-family="${cMono}" text-anchor="end">$${cv.toFixed(1)}</text>`;
+  foot.innerHTML=`<span>cost win <b>$${(a.cost_window_usd||0).toFixed(2)}</b></span>`
+    +`<span>all <b>$${(a.cost_all_usd||0).toFixed(2)}</b></span>`
+    +`<span>units <b>${a.units_completed||0}✓/${a.units_launched||0}</b></span>`
+    +`<span>tok/s <b>${a.tok_s_window!=null?a.tok_s_window:"—"}</b></span>`;
+  if(!us.length){ host.innerHTML='<div class="empty" style="min-height:110px"><div class="big">No completed units yet</div></div>'; }
+  else {
+    const cMono=C('--mono'), cFaint=C('--ink-faint'), cDim=C('--ink-dim'), cGrid=C('--grid'), cAcc=C('--accent'), cOx=C('--oxblood');
+    const W=580, H=168, ml=40, mr=14, mt=14, mb=30, plotW=W-ml-mr, plotH=H-mt-mb;
+    const cmax=Math.max(...us.map(u=>u.cost))*1.15 || 1, avg=us.reduce((s,u)=>s+u.cost,0)/us.length;
+    const bw=Math.min(46, plotW/us.length*0.62), gap=(plotW-bw*us.length)/(us.length+1), y=v=>mt+plotH-(v/cmax)*plotH;
+    let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="cost per unit">`;
+    for(let i=0;i<=3;i++){ const cv=cmax*i/3, yy=y(cv);
+      s+=`<line x1="${ml}" y1="${yy}" x2="${W-mr}" y2="${yy}" stroke="${cGrid}"/>`;
+      s+=`<text x="${ml-7}" y="${yy+3}" fill="${cFaint}" font-size="9" font-family="${cMono}" text-anchor="end">$${cv.toFixed(1)}</text>`;
+    }
+    const ya=y(avg);
+    s+=`<line x1="${ml}" y1="${ya}" x2="${W-mr}" y2="${ya}" stroke="${cDim}" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>`;
+    s+=`<text x="${W-mr}" y="${ya-5}" fill="${cDim}" font-size="9" font-family="${cMono}" text-anchor="end">avg $${avg.toFixed(2)}</text>`;
+    us.forEach((u,i)=>{
+      const bx=ml+gap+(bw+gap)*i, bh=Math.max(2,(u.cost/cmax)*plotH), by=mt+plotH-bh, tt=u.tele||{};
+      const tip=`unit #${u.num??"?"} · $${u.cost.toFixed(3)}${tt.tok_s?` · ${tt.tok_s} tok/s`:""}${tt.output?` · ${fmtTok(tt.output)} out`:""}`;
+      s+=`<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2.5" fill="${u.is_error?cOx:cAcc}" opacity="0.92"><title>${tip}</title></rect>`;
+      s+=`<text x="${bx+bw/2}" y="${mt+plotH+13}" fill="${cFaint}" font-size="8.5" font-family="${cMono}" text-anchor="middle">${u.kind==="consolidate"?"C":"#"+(u.num??"?")}</text>`;
+    });
+    s+=`<text x="${ml+plotW/2}" y="${H-3}" fill="${cDim}" font-size="9" letter-spacing="1.2" text-anchor="middle">RECENT UNITS →</text></svg>`;
+    host.innerHTML=s;
   }
-  // average line
-  const ya=y(avg);
-  s+=`<line x1="${ml}" y1="${ya}" x2="${W-mr}" y2="${ya}" stroke="${cDim}" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>`;
-  s+=`<text x="${W-mr}" y="${ya-5}" fill="${cDim}" font-size="9" font-family="${cMono}" text-anchor="end">avg $${avg.toFixed(2)}</text>`;
-  us.forEach((u,i)=>{
-    const bx=ml+gap+(bw+gap)*i;
-    const bh=Math.max(2,(u.cost/cmax)*plotH);
-    const by=mt+plotH-bh;
-    s+=`<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="2.5" fill="${u.is_error?cOx:cAcc}" opacity="0.92"/>`;
-    s+=`<text x="${bx+bw/2}" y="${mt+plotH+13}" fill="${cFaint}" font-size="8.5" font-family="${cMono}" text-anchor="middle">${u.kind==="consolidate"?"C":"#"+(u.num??"?")}</text>`;
-  });
-  s+=`<text x="${ml+plotW/2}" y="${H-3}" fill="${cDim}" font-size="9" letter-spacing="1.2" text-anchor="middle">RECENT UNITS →</text>`;
-  s+=`</svg>`;
-  host.innerHTML=s;
+  $("spend-tele").innerHTML=tokTele(a);
+}
+
+function tokTele(a){
+  const tw=a.tokens_window||{}, cw=a.ctx_window||0, cp=a.ctx_peak_window||0;
+  const totalIn=(tw.input||0)+(tw.cache_read||0)+(tw.cache_creation||0);
+  const cacheHit=totalIn?Math.round((tw.cache_read||0)/totalIn*100):0;
+  const fill=cw?Math.min(100,cp/cw*100):0;
+  const tile=(k,v)=>`<div class="tele-tile"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+  let h=`<div class="tele-tiles">`
+    +tile("output tok", fmtTok(tw.output))
+    +tile("input tok", fmtTok(totalIn))
+    +tile("cache hit", cacheHit+"%")
+    +tile("tok/s", a.tok_s_window!=null?a.tok_s_window:"—")
+    +`</div>`;
+  h+=`<div class="tele-row"><span class="lbl">context</span><span class="tele-bar"><span style="width:${fill.toFixed(1)}%"></span></span>`
+    +`<span class="val">${fmtTok(cp)} / ${fmtTok(cw)}</span></div>`;
+  const mw=a.models_window||{}, mids=Object.keys(mw);
+  if(mids.length){
+    const maxc=Math.max(...mids.map(m=>mw[m].cost))||1;
+    h+=`<div class="mdl-split">`+mids.map(m=>{
+      const v=mw[m], nm=m.replace("claude-","").replace(/-\d.*$/,""), w=Math.max(3,v.cost/maxc*100);
+      return `<div class="tele-row"><span class="lbl">${escapeHtml(nm)}</span><span class="tele-bar"><span style="width:${w}%"></span></span>`
+        +`<span class="val">$${v.cost.toFixed(2)} · ${fmtTok(v.output)}</span></div>`;
+    }).join("")+`</div>`;
+  }
+  return h;
+}
+
+function drawIngest(){
+  const host=$("ingest-list"), sub=$("ingest-sub"), items=(DATA&&DATA.ingest)||[];
+  if(!items.length){ host.innerHTML='<div class="empty" style="min-height:80px"><div class="big">No files</div></div>'; return; }
+  const sorted=[...items].sort((x,y)=>y.est_tokens-x.est_tokens);
+  const mx=sorted[0].est_tokens||1, tot=sorted.reduce((s,it)=>s+it.est_tokens,0);
+  if(sub) sub.textContent=`${sorted.length} files · ${fmtTok(tot)} tok total to ingest · chars/4 estimate`;
+  host.innerHTML=sorted.map(it=>{
+    const w=Math.max(2,(it.est_tokens/mx)*100);
+    return `<div class="ing-row" title="${escapeHtml(it.file)} · ${it.bytes} B"><span class="f">${escapeHtml(it.file)}</span>`
+      +`<span class="b"><span style="width:${w}%"></span></span><span class="t">${fmtTok(it.est_tokens)}</span></div>`;
+  }).join("");
 }
 
 function setMeter(prefix, best, unit, dp){
@@ -1580,11 +1645,12 @@ function renderBox(b){
   drawPlot(b.front||[]);
   setMeter("m-decode", b.best?.decode, "tok/s",1);
   setMeter("m-prefill", b.best?.prefill, "tok/s",1);
-  setMeter("m-quality", b.best?.quality, "elo",0);
+  setMeter("m-quality", b.best?.agentic || b.best?.quality, b.best?.agentic?"agentic":"quality", b.best?.agentic?2:0);
   drawRoofline(b.roofline_now);
   drawLeaderboard(b);
   drawCpuGpu(b);
   drawSpend(b);
+  drawIngest();
   drawTimeline(b.timeline);
   $("tl-sub").textContent=`${b.n_records||0} experiments · bar = decode tok/s · color = status`;
   renderActivity(b);
