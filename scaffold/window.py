@@ -134,6 +134,56 @@ def cmd_add_hours(box: str, path: str, d: dict, hours: float, force: bool) -> in
     return 0
 
 
+def _driver_pid(box: str):
+    """PID of the run_window.sh driver if alive, else None (run_window writes work/driver.pid)."""
+    try:
+        pid = int(open(os.path.join(box, "work", "driver.pid")).read().strip())
+        os.kill(pid, 0)
+        return pid
+    except Exception:
+        return None
+
+
+def cmd_pause(box: str) -> int:
+    os.makedirs(os.path.join(box, "work"), exist_ok=True)
+    open(os.path.join(box, "work", "PAUSE"), "w").close()
+    print(f"window: PAUSE set for {box} — the loop finishes the current unit, then waits (no cap spent while paused).")
+    print("window: run `resume` to continue; a `stop` during pause still stops cleanly.")
+    return 0
+
+
+def cmd_resume(box: str) -> int:
+    p = os.path.join(box, "work", "PAUSE")
+    if os.path.exists(p):
+        os.remove(p)
+        print(f"window: resumed {box} — the loop picks up on its next check (≤10s).")
+    else:
+        print(f"window: {box} was not paused (no PAUSE flag).")
+    return 0
+
+
+def cmd_hard_kill(box: str, path: str, d: dict) -> int:
+    """Escape hatch: terminate driver + in-flight unit immediately, NO consolidate/report."""
+    killed = []
+    dp = _driver_pid(box)
+    if dp:
+        _kill_tree(dp); killed.append(f"driver {dp}")
+    up = _current_pid(box)
+    if up:
+        _kill_tree(up); killed.append(f"unit {up}")
+    for f in ("STOP", "PAUSE", "current_unit.pid", "driver.pid", "QUEUE_EMPTY"):
+        try:
+            os.remove(os.path.join(box, "work", f))
+        except OSError:
+            pass
+    d["state"] = "killed"
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(d, fh, indent=2)
+    print(f"window: HARD KILL — terminated {', '.join(killed) if killed else 'nothing (no live processes found)'}.")
+    print("window: NO consolidate/report ran; state -> killed. Re-arm with run_window.sh to restart.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="control a live crucible campaign window (stop / add-remove time / status)")
     ap.add_argument("box", help="box folder, e.g. boxes/<nick>")
@@ -144,6 +194,9 @@ def main() -> int:
     ap_add = sub.add_parser("add-hours", help="add (or, negative, remove) hours to the active window")
     ap_add.add_argument("hours", type=float, help="hours to add; negative removes time")
     ap_add.add_argument("--force", action="store_true", help="skip the deadline>now / >start guardrails")
+    sub.add_parser("pause", help="pause after the current unit (resumable; no cap spent while waiting)")
+    sub.add_parser("resume", help="resume a paused loop")
+    sub.add_parser("hard-kill", help="terminate driver+unit NOW, no consolidate/report (escape hatch)")
     a = ap.parse_args()
 
     box = a.box.rstrip("/")
@@ -158,6 +211,12 @@ def main() -> int:
         return cmd_stop(box, a.graceful)
     if a.cmd == "add-hours":
         return cmd_add_hours(box, path, d, a.hours, a.force)
+    if a.cmd == "pause":
+        return cmd_pause(box)
+    if a.cmd == "resume":
+        return cmd_resume(box)
+    if a.cmd == "hard-kill":
+        return cmd_hard_kill(box, path, d)
     return 2
 
 

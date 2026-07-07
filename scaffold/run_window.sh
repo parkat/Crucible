@@ -365,6 +365,7 @@ fi
 # ---- the loop -----------------------------------------------------------------
 command -v claude >/dev/null 2>&1 || { echo "run_window: 'claude' CLI not on PATH" >&2; exit 1; }
 mkdir -p "$LOGDIR"
+echo "$$" > "$BOX/work/driver.pid"   # so window.py hard-kill can find the driver
 echo "run_window: $(date -Is) START box=$BOX winddown=$WINDDOWN deadline=$DEADLINE" >> "$LOG"
 
 UNIT=0
@@ -376,6 +377,14 @@ while : ; do
     echo "run_window: $(date -Is) STOP requested (window.py) -> consolidate + final report, then exit" | tee -a "$LOG"
     rm -f "$STOP_FLAG"; STOP_REQUESTED=1
     break
+  fi
+  # operator PAUSE (window.py): hold here without launching a unit (no cap spent) until resumed. A
+  # STOP during pause still wins (breaks to consolidate on the next top-of-loop check).
+  if [ -f "$BOX/work/PAUSE" ]; then
+    echo "run_window: $(date -Is) PAUSED (window.py) -> waiting for resume (or STOP)" | tee -a "$LOG"
+    while [ -f "$BOX/work/PAUSE" ] && [ ! -f "$STOP_FLAG" ]; do sleep 10; done
+    echo "run_window: $(date -Is) RESUMED" | tee -a "$LOG"
+    continue
   fi
   # live clock: re-read the deadline every iteration so window.py add-hours/remove-time takes effect
   # mid-run (START is fixed for the window; only DEADLINE/WINDDOWN move).
@@ -444,7 +453,7 @@ render "$CONSOLIDATE_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously
   || echo "run_window: $(date -Is) consolidate exited non-zero (logged)" | tee -a "$LOG"
 FINAL_STATE="completed"; [ "${STOP_REQUESTED:-0}" -eq 1 ] && FINAL_STATE="stopped"
 python3 -c "import json;p='$BOX/campaign.json';d=json.load(open(p));d['state']='$FINAL_STATE';json.dump(d,open(p,'w'),indent=2)"
-rm -f "$SENTINEL" "$CURPID_FILE" "$STOP_FLAG"
+rm -f "$SENTINEL" "$CURPID_FILE" "$STOP_FLAG" "$BOX/work/driver.pid" "$BOX/work/PAUSE"
 # render the just-sealed FINAL_*.md report(s) to PDF so the dashboard panel is ready immediately
 python3 scaffold/dashboard/report_pdf.py "$BOX" >/dev/null 2>&1 || true
 echo "run_window: $(date -Is) DONE box=$BOX units=$UNIT" | tee -a "$LOG"
