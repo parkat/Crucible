@@ -422,18 +422,16 @@
   .panel.collapsed > :not(h2){display:none}
   /* sectioned rows within each tab: remap c3/c6/c12 onto a 6-col grid and order by size, so every
      tab auto-forms clean bands — stat/list strip (thirds) -> chart rows (halves) -> full-width */
-  .grid.sectioned{display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); grid-auto-flow:row; align-items:start}
-  .grid.sectioned > .panel{grid-column:span 3; order:2}
-  .grid.sectioned > .panel.c3,.grid.sectioned > .panel.c4{grid-column:span 2; order:1}
-  .grid.sectioned > .panel.c6,.grid.sectioned > .panel.c8{grid-column:span 3; order:2}
-  .grid.sectioned > .panel.c12{grid-column:1 / -1; order:3}
-  @media(max-width:900px){
-    .grid.sectioned{grid-template-columns:repeat(2,minmax(0,1fr))}
-    .grid.sectioned > .panel,.grid.sectioned > .panel.c3,.grid.sectioned > .panel.c4,
-    .grid.sectioned > .panel.c6,.grid.sectioned > .panel.c8{grid-column:span 1}
-    .grid.sectioned > .panel.c12{grid-column:1 / -1}
-  }
-  @media(max-width:600px){
+  /* masonry: columns auto-fit the window width; every panel keeps its NATURAL height and packs
+     tight with no gaps (JS sets each panel's grid-row span from its measured height). Charts take
+     2 columns, tables/timeline the full width. */
+  .grid.sectioned{display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(clamp(300px, 26vw, 480px), 1fr));
+    column-gap:var(--gap); row-gap:0; grid-auto-rows:1px; grid-auto-flow:row dense; align-items:start}
+  .grid.sectioned > .panel{grid-column:span 1}
+  .grid.sectioned > .panel.c6,.grid.sectioned > .panel.c8{grid-column:span 2}
+  .grid.sectioned > .panel.c12{grid-column:1 / -1}
+  @media(max-width:680px){
     .grid.sectioned{grid-template-columns:1fr}
     .grid.sectioned > .panel{grid-column:1 / -1}
   }
@@ -856,8 +854,27 @@ function applyPrefs(){
   });
   document.querySelectorAll("#tabbar .tab").forEach(b=>b.classList.toggle("on", b.dataset.tab===tab));
   syncControls();
+  layoutMasonry();
 }
 function repaint(){ if(DATA){ renderFleet(); const b=curBox(); if(b) renderBox(b); } }
+
+// masonry: give each visible panel a grid-row span from its natural height, so panels of different
+// heights pack tight with NO gaps (grid-auto-rows is 1px, so span ≈ pixel height + gap). Re-run on
+// resize / tab switch / collapse / data refresh. rAF-batched so reset→measure→set is one frame.
+function layoutMasonry(){
+  const grid=document.querySelector(".grid.sectioned"); if(!grid) return;
+  const gap=parseFloat(getComputedStyle(grid).columnGap)||14;
+  const panels=[...grid.children].filter(p=>p.classList&&p.classList.contains("panel"));
+  panels.forEach(p=>{ p.style.gridRowEnd=""; });                 // reset -> each panel reports natural height
+  panels.forEach(p=>{
+    if(getComputedStyle(p).display==="none"){ p.style.gridRowEnd=""; return; }
+    const h=p.getBoundingClientRect().height;
+    p.style.gridRowEnd="span "+Math.max(1, Math.ceil(h+gap));
+  });
+}
+let _masonryRAF=0;
+function scheduleMasonry(){ cancelAnimationFrame(_masonryRAF); _masonryRAF=requestAnimationFrame(layoutMasonry); }
+window.addEventListener("resize", scheduleMasonry);
 
 // which section-tab each panel belongs to ("*" = always shown; array = multiple tabs).
 const PANEL_TABS={
@@ -880,7 +897,7 @@ function initTabs(){
     const p=h2.closest(".panel"), key=p.getAttribute("data-panel");
     const arr=PREFS.collapsed||(PREFS.collapsed=[]); const i=arr.indexOf(key);
     if(i===-1){ arr.push(key); } else { arr.splice(i,1); }
-    p.classList.toggle("collapsed", i===-1); savePrefs();
+    p.classList.toggle("collapsed", i===-1); savePrefs(); layoutMasonry();
   });
 }
 
@@ -1747,6 +1764,7 @@ function renderBox(b){
   renderReports(b);
   drawBrag(b);
   $("foot-box").textContent="box: "+(b.nick||"—")+(DATA&&DATA.boxes.length>1?` (${DATA.boxes.length} in fleet)`:"");
+  layoutMasonry();
 }
 
 async function poll(){
