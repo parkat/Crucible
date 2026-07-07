@@ -117,6 +117,25 @@ Verified in-browser: default 6 windows open with real data, launcher lists all 3
 checkmarks, drag/close/focus work, no console errors. (Fixed en route: the open Apple-menu inherited
 white-on-white text — forced the dropdown's ink color.)
 
+### System 3.0 desktop — window model, Control Panel, pattern editor, bitmap font
+Second pass on the desktop, from operator feedback:
+- **Real window model** — each panel/cmdbar becomes a flex window: a fixed pinstripe **title bar** with
+  **close / zoom / resize** all working, a scrollable **`.win-body`** with a **classic dithered
+  scrollbar**, and the base collapse-on-titlebar-click neutralized so dragging is clean. Fixed a bug
+  where the window-model `display` rule overrode the closed-panel `display:none`, so *every* panel was
+  visible and piled at the origin — now only `.win-open` windows render.
+- **Neat tiled default** — the six/seven default windows open at explicit tiled coordinates (no more
+  cascade pile-up); each shows its live content. "Clean Up Windows" re-tiles.
+- **Bitmap font** — dropped-in OFL **sysfont** (Chicago-style) served from `fonts/`, wired via the
+  `ChicagoFLF` `@font-face`; `--serif` (titles/UI) + `--sans` lead with it, `font-smoothing:none`
+  forces aliased pixel text.
+- **Classic Control Panel** (replaces the old drawer) — boxed sections (Desktop Pattern, Appearance,
+  Autonomy Tier, Window Defaults, Search) styled after the System 6/7 panel, incl. an **8×8 desktop-
+  pattern editor**: draw in the grid and it renders to a canvas tile that repeats across the desktop
+  (persisted; re-themes with dark mode).
+- **Desktop icons** — a Reports floppy + a Read Me doc; double-click opens the reports window / a
+  System-3-rendered README (with the 1-bit campaign flowchart).
+
 ## Verification done
 - `window.py` — functional test (status / add-hours ± / stop / --graceful / guardrails / open-ended).
 - `run_window.sh` — `bash -n` + dry-run intact.
