@@ -408,6 +408,18 @@
   @keyframes lo-rot{to{transform:rotate(360deg)}}
   .lo-txt{color:var(--ink); font-size:14px; letter-spacing:.5px}
   .lo-sub{color:var(--ink-faint); font-size:11px}
+  /* section tabs + collapsible panels (0.4 restructure) */
+  .tabbar{display:flex; gap:5px; flex-wrap:wrap; margin:0 0 14px}
+  .tabbar .tab{font-family:var(--mono); font-size:11.5px; letter-spacing:.3px; color:var(--ink-dim);
+    background:transparent; border:1px solid var(--hair); border-radius:7px; padding:6px 13px; cursor:pointer;
+    transition:color .15s, border-color .15s, box-shadow .15s}
+  .tabbar .tab:hover{color:var(--ink); border-color:var(--ink-faint)}
+  .tabbar .tab.on{color:var(--ink); border-color:var(--accent); box-shadow:inset 0 -2px 0 var(--accent)}
+  .panel[data-tabhidden]{display:none !important}
+  .panel > h2{cursor:pointer}
+  .panel > h2::before{content:"▾ "; opacity:.45; font-size:.82em}
+  .panel.collapsed > h2::before{content:"▸ "}
+  .panel.collapsed > :not(h2){display:none}
 
   /* ── customize drawer ── */
   .scrim{position:fixed; inset:0; background:rgba(20,18,13,.4); opacity:0; pointer-events:none; transition:opacity .25s ease; z-index:40}
@@ -495,6 +507,15 @@
       </div>
     </div>
   </div>
+
+  <nav class="tabbar" id="tabbar" aria-label="Sections">
+    <button class="tab" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="performance">Performance</button>
+    <button class="tab" data-tab="research">Research &amp; Queue</button>
+    <button class="tab" data-tab="cost">Cost &amp; Tokens</button>
+    <button class="tab" data-tab="system">System</button>
+    <button class="tab" data-tab="all">All</button>
+  </nav>
 
   <div class="grid">
 
@@ -795,9 +816,9 @@ const SVGNS = "http://www.w3.org/2000/svg";
 const C = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 // ── preferences (saved on device) ───────────────────────────────────────────
-const DEF_PREFS={theme:"auto", accent:"teal", density:"comfortable", width:"fill", motion:"on", hidden:[]};
+const DEF_PREFS={theme:"auto", accent:"teal", density:"comfortable", width:"fill", motion:"on", hidden:[], tab:"overview", collapsed:[]};
 let PREFS=loadPrefs();
-function loadPrefs(){ try{ const p=JSON.parse(localStorage.getItem("crucible-prefs")); if(p&&typeof p==="object") return Object.assign({},DEF_PREFS,p,{hidden:Array.isArray(p.hidden)?p.hidden:[]}); }catch(e){} return Object.assign({},DEF_PREFS,{hidden:[]}); }
+function loadPrefs(){ try{ const p=JSON.parse(localStorage.getItem("crucible-prefs")); if(p&&typeof p==="object") return Object.assign({},DEF_PREFS,p,{hidden:Array.isArray(p.hidden)?p.hidden:[], collapsed:Array.isArray(p.collapsed)?p.collapsed:[], tab:p.tab||"overview"}); }catch(e){} return Object.assign({},DEF_PREFS,{hidden:[], collapsed:[]}); }
 function savePrefs(){ try{ localStorage.setItem("crucible-prefs", JSON.stringify(PREFS)); }catch(e){} }
 function resolvedTheme(){ return PREFS.theme==="auto" ? ((window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light") : PREFS.theme; }
 function applyPrefs(){
@@ -807,13 +828,44 @@ function applyPrefs(){
   root.setAttribute("data-density", PREFS.density);
   root.setAttribute("data-width", PREFS.width);
   root.setAttribute("data-motion", PREFS.motion==="off"?"off":"on");
-  // panel visibility
+  // panel visibility: drawer-hide (.hidden) + active-tab filter (data-tabhidden) + collapse (.collapsed)
+  const tab=PREFS.tab||"overview";
   document.querySelectorAll("[data-panel]").forEach(p=>{
-    p.classList.toggle("hidden", PREFS.hidden.indexOf(p.getAttribute("data-panel"))!==-1);
+    const key=p.getAttribute("data-panel"), pt=PANEL_TABS[key]||"system";
+    const inTab=(tab==="all"||pt==="*"||pt===tab||(Array.isArray(pt)&&pt.indexOf(tab)!==-1));
+    p.classList.toggle("hidden", PREFS.hidden.indexOf(key)!==-1);
+    if(inTab) p.removeAttribute("data-tabhidden"); else p.setAttribute("data-tabhidden","");
+    p.classList.toggle("collapsed", (PREFS.collapsed||[]).indexOf(key)!==-1);
   });
+  document.querySelectorAll("#tabbar .tab").forEach(b=>b.classList.toggle("on", b.dataset.tab===tab));
   syncControls();
 }
 function repaint(){ if(DATA){ renderFleet(); const b=curBox(); if(b) renderBox(b); } }
+
+// which section-tab each panel belongs to ("*" = always shown; array = multiple tabs).
+const PANEL_TABS={
+  fleet:"*", conclusion:"research",
+  window:"overview", ledger:"overview", pareto:["overview","performance"], readout:"overview",
+  findings:"overview", hype:"overview", queue:["overview","research"],
+  leaderboard:"performance", cpugpu:"performance", depth:"performance", timeline:"performance", models:"performance",
+  research:"research", activity:"research", steer:"research",
+  agent:"cost", spend:"cost", ingest:"cost",
+  hardware:"system", transcript:"system", reports:"system",
+};
+function setTab(t){ if(!t) return; PREFS.tab=t; savePrefs(); applyPrefs(); if(("#"+t)!==location.hash) history.replaceState(null,"","#"+t); }
+function initTabs(){
+  const h=location.hash.slice(1); if(h) PREFS.tab=h;
+  $("tabbar").addEventListener("click", e=>{ const b=e.target.closest(".tab"); if(b) setTab(b.dataset.tab); });
+  window.addEventListener("hashchange", ()=>{ const t=location.hash.slice(1); if(t&&t!==PREFS.tab) setTab(t); });
+  // collapse a panel by clicking its header text (child controls like buttons still work)
+  document.querySelector(".grid").addEventListener("click", e=>{
+    const h2=e.target.closest(".panel > h2"); if(!h2 || e.target!==h2) return;
+    const p=h2.closest(".panel"), key=p.getAttribute("data-panel");
+    const arr=PREFS.collapsed||(PREFS.collapsed=[]); const i=arr.indexOf(key);
+    if(i===-1){ arr.push(key); } else { arr.splice(i,1); }
+    p.classList.toggle("collapsed", i===-1); savePrefs();
+  });
+}
 
 // wire the drawer controls
 function syncControls(){
@@ -1712,6 +1764,7 @@ $("theme-toggle").addEventListener("click", toggleTheme);
 
 initSort();
 initDrawer();
+initTabs();
 applyPrefs();
 poll();
 setInterval(poll,4000);
