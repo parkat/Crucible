@@ -92,6 +92,26 @@ So: KLD does cheap within-model interpolation; pairwise Elo does expensive cross
 anchoring; together every config gets one quality coordinate without judging the
 thousands. Full mechanics in `02_EVAL_FUNNEL.md`.
 
+## v0.4 — Quality is the AGENTIC composite (supersedes Elo/BPB for RANKING)
+
+Crucible feeds an agent cluster (project Cynosure), so a config's worth is its **agentic
+usefulness**, not generic-text quality. From v0.4 the ranked **quality axis is an agentic
+composite** (`scaffold/eval/runner.py:agentic_score`) over runnable, industry-standard benchmarks:
+
+- **tool / function calling** (BFCL-style single-turn call emission) — weight **0.40**, the center
+- **instruction following** (IFEval-style programmatic constraint checks) — **0.25**
+- **reasoning** (GSM8K exact-match) — **0.20**
+- **code** (unit-tested, the existing `code.jsonl`) — **0.15**
+
+`agentic_score` (0..1) becomes `ledger._quality_coord`; the Pareto front stays **3-D**
+{decode, prefill, agentic-quality}. Each sub-benchmark is also recorded (`toolcall_pass`,
+`ifeval_pass`, `gsm8k_pass`, `code_pass`) so a config is comparable to published leaderboard
+numbers. **Elo/BPB are retained as recorded context** and remain the fallback ranker only when no
+agentic score is present (legacy records). The weights are an **agent-revisable prior** — revise
+on evidence and record why. The frozen benchmark item sets are invariant-kernel (gated like every
+eval asset, doctrine/04). Heavier multi-step agentic harnesses (tau-bench / SWE-bench) are future
+plugins on the same registry, not part of this seed.
+
 ## Status semantics (written to every ledger record)
 
 - **`degenerate`** — broke a within-model floor; logged, off-front.

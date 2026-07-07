@@ -88,6 +88,9 @@ If the top item is not actually takeable (ambiguous, too big, blocked), your uni
   `failed`/`degenerate` record, not a contender.
 - **Instruct GGUFs:** Tier-0 degeneracy check **and** the **chat template** path (never feed
   raw prompts to a template-bearing model). 
+- **Quality = agentic composite (v0.4):** run the agentic battery via `eval_config.py` (tool-calling
+  + IFEval + GSM8K + code); its `agentic_score` is the ranked quality coordinate (doctrine/01+02).
+  Record the sub-scores too. BPB/Elo are still recorded as context, not the ranker.
 - **Measurement ([BOX]):** pin the governor, keep the box idle, discard warmup, use
   `llama-bench` (median + variance). GPU runs use the resolved `--build` (CUDA) dir with
   `-ngl 99`; the CPU `--build --cpu` dir silently ignores `-ngl`.
@@ -104,12 +107,15 @@ If the top item is not actually takeable (ambiguous, too big, blocked), your uni
   `record` subcommand (reads a JSON object on stdin or `--json`; unknown keys warn; prints the id):
   ```bash
   echo '{"status":"contender","parent":"<parent-id>","config":{"engine":"...","model":"...","quant":"..."},
-         "decode_tok_s":0.0,"prefill_tok_s":0.0,"bpb":0.0,"notes":"..."}' \
+         "decode_tok_s":0.0,"prefill_tok_s":0.0,"agentic_score":0.0,"toolcall_pass":0.0,"ifeval_pass":0.0,
+         "gsm8k_pass":0.0,"code_pass":0.0,"bpb":0.0,"notes":"..."}' \
     | python3 scaffold/ledger.py record "$BOX/ledger.jsonl"
   ```
-  Record `bpb` (the cross-model quality ruler, doctrine 01/02) whenever you have it — it, not the
-  raw `quality` scalar, is what the Pareto front ranks on. Negative and null results are research
-  output; log them.
+  Record **`agentic_score`** (the v0.4 quality coordinate — the agentic composite from
+  `eval_config.py`, doctrine/01+02) plus its sub-scores (`toolcall_pass`/`ifeval_pass`/`gsm8k_pass`/
+  `code_pass`) whenever you have them — `agentic_score`, not `bpb`/`quality`, is what the Pareto
+  front ranks on now. Still record `bpb` as cross-model context. Negative and null results are
+  research output; log them.
 - Update `"$BOX/MEMORY.md"` to current truth (phase, front, tried-and-ruled-out, open
   hypotheses, deadline restated).
 - Commit **inside the box's nested repo**:

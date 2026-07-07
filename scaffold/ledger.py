@@ -63,6 +63,12 @@ class Record:
     math_pass: Optional[float] = None       # fraction
     code_pass: Optional[float] = None       # fraction
 
+    # agentic funnel (v0.4, doctrine/01+02): the quality axis is now an agentic composite.
+    agentic_score: Optional[float] = None   # 0..1 weighted composite -> the RANKED quality coordinate
+    toolcall_pass: Optional[float] = None   # function/tool-call emission accuracy (BFCL-style, single-turn)
+    ifeval_pass: Optional[float] = None     # instruction-following (programmatic constraint checks)
+    gsm8k_pass: Optional[float] = None      # grade-school math reasoning (exact-match)
+
     # bookkeeping
     notes: str = ""
 
@@ -118,6 +124,13 @@ def load(ledger_path: str) -> list[dict]:
 _PERF = ("decode_tok_s", "prefill_tok_s")
 
 def _quality_coord(r: dict) -> Optional[float]:
+    # v0.4: the ranked quality coordinate is the AGENTIC composite (doctrine/01+02). It centers
+    # the front on agentically-useful configs (Cynosure targets an agent cluster). bpb/Elo remain
+    # RECORDED context and are the fallback ranker only when no agentic score is present (e.g. a
+    # legacy record or a config evaluated before the agentic tier ran).
+    agentic = r.get("agentic_score")
+    if agentic is not None:
+        return agentic                   # already "higher = better", 0..1
     bpb = r.get("bpb")
     if bpb is not None:
         return -bpb                      # lower bpb is better -> negate so "higher = better"

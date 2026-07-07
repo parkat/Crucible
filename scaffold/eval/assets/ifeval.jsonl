@@ -1,0 +1,12 @@
+{"id": "if001", "prompt": "List exactly three benefits of running LLMs on CPUs. Use bullet points that start with '-'. Do not use any commas anywhere in your answer.", "checks": [{"type": "bullets", "n": 3, "at_least": false}, {"type": "no_commas"}]}
+{"id": "if002", "prompt": "Write a one-sentence summary of what memory bandwidth is. Use at most 20 words and end your answer with the word 'bottleneck'.", "checks": [{"type": "max_words", "n": 20}, {"type": "ends_with", "value": "bottleneck"}]}
+{"id": "if003", "prompt": "Respond with a single JSON object that has exactly the keys \"model\" and \"speed\".", "checks": [{"type": "json"}, {"type": "contains", "value": "model"}, {"type": "contains", "value": "speed"}]}
+{"id": "if004", "prompt": "Explain quantization in exactly two sentences.", "checks": [{"type": "max_sentences", "n": 2}]}
+{"id": "if005", "prompt": "Reply using only lowercase letters and describe what makes a model fast.", "checks": [{"type": "lowercase"}]}
+{"id": "if006", "prompt": "Give a numbered list of four steps to deploy a language model. Number each step like '1.'.", "checks": [{"type": "numbered", "n": 4}]}
+{"id": "if007", "prompt": "Answer in ALL CAPITAL LETTERS: is running inference on old hardware worthwhile?", "checks": [{"type": "all_caps"}]}
+{"id": "if008", "prompt": "Write two sentences about serving models, and mention the word 'latency' at least twice.", "checks": [{"type": "keyword_count", "value": "latency", "n": 2}]}
+{"id": "if009", "prompt": "Start your response with the word 'Certainly' and keep the whole answer under 30 words.", "checks": [{"type": "starts_with", "value": "Certainly"}, {"type": "max_words", "n": 29}]}
+{"id": "if010", "prompt": "Write at least 50 words about repurposing salvage hardware for inference.", "checks": [{"type": "min_words", "n": 50}]}
+{"id": "if011", "prompt": "Describe CPU-only inference. Do not mention the word 'GPU' anywhere in your answer.", "checks": [{"type": "not_contains", "value": "GPU"}]}
+{"id": "if012", "prompt": "Explain decode throughput and make sure your answer contains the exact phrase 'tokens per second'.", "checks": [{"type": "contains", "value": "tokens per second"}]}

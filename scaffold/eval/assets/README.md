@@ -49,3 +49,30 @@ disagreeing with the expected verdict, judge drift is visible in the audit trail
 ```json
 {"id": "ref001", "prompt": "...", "output_a": "<clearly better answer>", "output_b": "<clearly worse answer>", "expected_winner": "a"}
 ```
+
+## Agentic benchmarks (v0.4) — the quality composite
+
+From v0.4 the **ranked quality coordinate is an agentic composite** (`runner.agentic_score`,
+doctrine/01+02). These frozen sets are auto-graded (no judge) and each is recorded so a config is
+comparable to public leaderboards. Still invariant-kernel — propose changes, don't silently edit.
+
+### `toolcall.jsonl`  — tool / function calling (BFCL-style, the center; weight 0.40)
+```json
+{"id": "t001", "prompt": "What's the weather in Paris?", "tools": [{"name": "get_weather", "description": "...", "parameters": {"city": "string"}}], "expected": {"name": "get_weather", "args": {"city": "Paris"}}}
+```
+Grading: the model is prompted with the tool schemas + request and must emit ONE JSON tool call;
+score = 0.5·(name correct) + 0.5·(fraction of expected args correct). Single-turn call emission.
+
+### `ifeval.jsonl`  — instruction following (IFEval-style; weight 0.25)
+```json
+{"id": "if001", "prompt": "List exactly three benefits ... start with '-' ... no commas.", "checks": [{"type": "bullets", "n": 3, "at_least": false}, {"type": "no_commas"}]}
+```
+Grading: each output scores the fraction of its programmatic `checks` satisfied. Check `type`s:
+`contains`/`not_contains`/`regex`/`min_words`/`max_words`/`bullets`/`numbered`/`json`/`ends_with`/
+`starts_with`/`no_commas`/`keyword_count`/`all_caps`/`lowercase`/`max_sentences`.
+
+### `gsm8k.jsonl`  — grade-school reasoning (exact-match; weight 0.20)
+```json
+{"id": "g001", "prompt": "A baker made 48 muffins and sold three-quarters ... Give only the number.", "answer": 12}
+```
+Grading: same last-number exact-match as `math.jsonl` (reuses `runner.grade_math`).

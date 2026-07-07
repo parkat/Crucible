@@ -69,3 +69,35 @@ and that a true base model still runs raw. This patch is defensive but unverifie
   contract; the gap is host-side (`apt install wakeonlan` or ship a `.ps1`). No master change.
 - **§2 stray files** (`"$LOCK"`, `work_dashboard.log`) were optiplex5050-checkout-only — not
   present in this tree; nothing to delete here. (H removes the cause of the `"$LOCK"` one.)
+
+---
+
+## v0.4 (branch `release/0.4`) — Quality axis becomes the AGENTIC composite  (2026-07-07)
+
+**Eval-kernel change, HUMAN-DIRECTED by the operator** (parker@pureturbos.com) in a dev session.
+Doctrine/04 gates eval/measurement-kernel changes even at T4; this one is authored by the human
+(not silently self-applied by the loop), developed on the `release/0.4` branch, and recorded here
+per the gate. **Finalize at the 0.4 merge.**
+
+**Rationale:** Crucible feeds an agent cluster (project Cynosure), so configs must be ranked by
+AGENTIC usefulness, not generic-text quality. Operator's two explicit choices (2026-07-07): center
+scoring on agentic performance + industry-standard benchmarks; make the ranked quality coordinate an
+agentic composite (bpb/Elo demoted to recorded context).
+
+**Files:**
+- `scaffold/eval/runner.py` — graders `grade_ifeval`, `grade_toolcall` (+`_extract_toolcall`,
+  `_first_json`) and the `agentic_score` composite (weights tool 0.40 / ifeval 0.25 / gsm8k 0.20 /
+  code 0.15 — agent-revisable). All auto-graded; objective Tier-0/1 unchanged.
+- `scaffold/eval/eval_config.py` — runs the batteries on the target, emits `agentic_score` +
+  `toolcall_pass`/`ifeval_pass`/`gsm8k_pass` (assets optional so older staged dirs still run).
+- `scaffold/ledger.py` — Record gains `agentic_score`/`toolcall_pass`/`ifeval_pass`/`gsm8k_pass`;
+  `_quality_coord` returns `agentic_score` when present (front stays 3-D). bpb/Elo = fallback ranker
+  for legacy records + recorded context.
+- `scaffold/eval/assets/{toolcall,ifeval,gsm8k}.jsonl` — new FROZEN seed sets (10 / 12 / 12 items).
+- `doctrine/01_RUBRIC.md`, `doctrine/02_EVAL_FUNNEL.md`, `eval/assets/README.md`, `prompts/unit.md`,
+  `dashboard/server.py` — amended to describe/surface the agentic quality axis.
+
+**Verify before merge:** graders pass `runner.py`'s self-test (done). On-box: run `eval_config.py`
+against a real staged GGUF and confirm sane sub-scores + composite; confirm `ledger.py front` ranks
+on `agentic_score`. Heavier multi-step agentic harnesses (tau-bench/SWE-bench) are deferred as
+future plugins on the same registry.

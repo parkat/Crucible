@@ -71,6 +71,26 @@ Q(M, c)    = Q_base(M) - penalty(KLD(M, c))      # within-model interpolation, f
 Promote front contenders to **direct** Tier-2 judging to replace the interpolated
 estimate with a measured Elo and to recalibrate `penalty`.
 
+## Tier 1.5 — Agentic benchmarks (v0.4): the quality coordinate
+
+Because Crucible's outputs join an agent cluster (Cynosure), the **quality axis is an agentic
+composite**, not generic-text quality. Between the objective Tier-1 filters and the expensive
+Tier-2 judge, every fast-enough config runs a fixed, **auto-graded** agentic battery on the target:
+
+- **tool / function calling** (`toolcall.jsonl`, BFCL-style): present tool schemas + a request; the
+  model emits ONE JSON tool call; grade name + argument match. Single-turn AST-style — a multi-step
+  tool LOOP (tau-bench-style) is a future plugin, not this.
+- **instruction following** (`ifeval.jsonl`, IFEval-style): programmatic constraint checks (word/
+  sentence limits, formatting, keywords, JSON-validity) — un-gameable, execution-graded.
+- **reasoning** (`gsm8k.jsonl`): grade-school word problems, exact-match.
+- **code** (`code.jsonl`, existing): unit-tested functions.
+
+`runner.agentic_score` combines them (weights in `01`) into the 0..1 coordinate the Pareto front
+ranks on. All auto-graded (no judge), so — like Tier 1 — the T2 judge cannot single-handedly
+elevate a config the agentic anchors call weak. BPB and pairwise Elo are still computed and
+**recorded as context** (cross-model reference + contamination-resistant signal) but are no longer
+the primary ranker.
+
 ## Why this survives a T4 self-modifying agent
 
 - Everything that **is the ruler** — the frozen corpus, the auto-gradable item sets,
@@ -108,6 +128,9 @@ In `scaffold/eval/assets/` — see `assets/README.md` for schemas and seed examp
 - `math.jsonl` — `{id, prompt, answer}` exact-match items.
 - `code.jsonl` — `{id, prompt, tests}` unit-test items (tests run sandboxed).
 - `pairwise_prompts.jsonl` — `{id, prompt}` open-ended prompts for Tier-2 judging.
+- `toolcall.jsonl` — `{id, prompt, tools[], expected:{name,args}}` function-calling items (v0.4).
+- `ifeval.jsonl` — `{id, prompt, checks[]}` instruction-following constraint items (v0.4).
+- `gsm8k.jsonl` — `{id, prompt, answer}` grade-school reasoning items, exact-match (v0.4).
 - `judge_rubric.md` — the instructions the session follows when judging A vs B.
 - `reference_pair.json` — a frozen A/B with a known expected verdict, for drift checks.
 

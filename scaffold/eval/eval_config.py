@@ -116,22 +116,49 @@ def load_jsonl(path):
                 out.append(json.loads(ln))
     return out
 
+def load_jsonl_opt(path):
+    """Like load_jsonl but returns [] if the file is absent — the v0.4 agentic assets may not
+    exist in an older box's staged asset dir, so degrade gracefully instead of crashing."""
+    return load_jsonl(path) if os.path.exists(path) else []
+
+def _toolcall_prompt(it):
+    """Single-shot function-calling prompt: present the tool schemas + the user request and ask
+    for ONE JSON tool call. Tests call EMISSION (BFCL AST-style), not a multi-step tool loop."""
+    tools = json.dumps(it.get("tools", []), ensure_ascii=False)
+    return ("You can call these tools (JSON schemas):\n" + tools +
+            "\n\nUser request: " + it["prompt"] +
+            "\n\nRespond with ONE JSON tool call and nothing else, exactly like: "
+            '{"name": "<tool_name>", "arguments": {<args>}}')
+
 math_items = load_jsonl(os.path.join(ASSETS, "math.jsonl"))
 code_items = load_jsonl(os.path.join(ASSETS, "code.jsonl"))
+# agentic benchmarks (v0.4) — optional so an older staged asset dir still runs
+ifeval_items = load_jsonl_opt(os.path.join(ASSETS, "ifeval.jsonl"))
+gsm8k_items  = load_jsonl_opt(os.path.join(ASSETS, "gsm8k.jsonl"))
+tool_items   = load_jsonl_opt(os.path.join(ASSETS, "toolcall.jsonl"))
 
 t0 = time.time()
-math_out = [gen(it["prompt"], n=120) for it in math_items]
-code_out = [gen(it["prompt"], n=320) for it in code_items]
+math_out   = [gen(it["prompt"], n=120) for it in math_items]
+code_out   = [gen(it["prompt"], n=320) for it in code_items]
+ifeval_out = [gen(it["prompt"], n=256) for it in ifeval_items]
+gsm8k_out  = [gen(it["prompt"], n=256) for it in gsm8k_items]
+tool_out   = [gen(_toolcall_prompt(it), n=160) for it in tool_items]
 
-# Tier-0 degeneracy across all generated samples
+# Tier-0 degeneracy across ALL generated samples
 degens = []
-for o in math_out + code_out:
+for o in math_out + code_out + ifeval_out + gsm8k_out + tool_out:
     bad, reason = runner.is_degenerate(o)
     if bad:
         degens.append(reason)
 
 math_pass = runner.grade_math(math_out, math_items)
 code_pass = runner.grade_code(code_out, code_items)
+ifeval_pass   = runner.grade_ifeval(ifeval_out, ifeval_items) if ifeval_items else None
+gsm8k_pass    = runner.grade_math(gsm8k_out, gsm8k_items) if gsm8k_items else None
+toolcall_pass = runner.grade_toolcall(tool_out, tool_items) if tool_items else None
+# v0.4 quality coordinate = agentic composite (tool-use + instruction-following + reasoning + code)
+agentic = runner.agentic_score({"toolcall": toolcall_pass, "ifeval": ifeval_pass,
+                                "gsm8k": gsm8k_pass, "code": code_pass})
 
 result = {
     "model": os.path.basename(MODEL),
@@ -143,12 +170,22 @@ result = {
     "math_n": len(math_items),
     "code_pass": code_pass,
     "code_n": len(code_items),
+    # agentic funnel (v0.4) — agentic_score is the ranked quality coordinate (ledger._quality_coord)
+    "agentic_score": agentic,
+    "toolcall_pass": toolcall_pass,
+    "toolcall_n": len(tool_items),
+    "ifeval_pass": ifeval_pass,
+    "ifeval_n": len(ifeval_items),
+    "gsm8k_pass": gsm8k_pass,
+    "gsm8k_n": len(gsm8k_items),
     "eval_seconds": round(time.time() - t0, 1),
     "samples": {
         "math": [{"prompt": it["prompt"][:60], "want": it["answer"], "got": (o or "")[:120]}
                  for it, o in zip(math_items, math_out)],
         "code": [{"prompt": it["prompt"][:60], "got": (o or "")[:200]}
                  for it, o in zip(code_items, code_out)],
+        "toolcall": [{"prompt": it["prompt"][:60], "want": it.get("expected"), "got": (o or "")[:160]}
+                     for it, o in zip(tool_items, tool_out)],
     },
 }
 print(json.dumps(result, indent=2))
