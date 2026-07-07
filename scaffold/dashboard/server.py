@@ -20,7 +20,7 @@ Usage:
 Then open http://localhost:8787/
 """
 from __future__ import annotations
-import argparse, json, os, re, sys, time
+import argparse, json, os, re, subprocess, sys, time
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -881,6 +881,100 @@ def discover_boxes(path: str) -> list[str]:
     return out
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# write-API (0.4): the Control page POSTs /action/<name> here; each shells to a vetted CLI. The server
+# binds 127.0.0.1 (localhost-only); the box is validated against the served set; every arg is passed as
+# an argv LIST (never a shell string), so there is no command injection.
+# ─────────────────────────────────────────────────────────────────────────────
+def _canon_box(box):
+    want = str(box or "").rstrip("/")
+    for b in BOXES:
+        if b.rstrip("/") == want or os.path.basename(b.rstrip("/")) == want:
+            return b
+    return None
+
+def _run(argv, timeout=30):
+    p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    return {"rc": p.returncode, "out": (p.stdout or "").strip(), "err": (p.stderr or "").strip()}
+
+def _do_action(action, params):
+    box = _canon_box(params.get("box"))
+    if not box:
+        return {"ok": False, "error": f"unknown box: {params.get('box')!r}"}
+    PY = ["python3"]
+    try:
+        if action == "steer":
+            text = (params.get("text") or "").strip()
+            if not text:
+                return {"ok": False, "error": "empty steering note"}
+            argv = PY + ["scaffold/steer.py", box, text]
+            if params.get("tag"):
+                argv += ["--tag", str(params["tag"])]
+            if params.get("research"):
+                argv += ["--research"]
+            r = _run(argv); return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action == "steer-delete":
+            r = _run(PY + ["scaffold/steer.py", box, "--delete", str(int(params.get("n") or 0))])
+            return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action == "queue-inject":
+            text = (params.get("text") or "").strip()
+            if not text:
+                return {"ok": False, "error": "empty queue item"}
+            argv = PY + ["scaffold/queue.py", box, text]
+            if params.get("tag"):
+                argv += ["--tag", str(params["tag"])]
+            r = _run(argv); return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action == "window-add":
+            argv = PY + ["scaffold/window.py", box, "add-hours", str(float(params.get("hours")))]
+            if params.get("force"):
+                argv += ["--force"]
+            r = _run(argv); return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action in ("pause", "resume", "hard-kill"):
+            r = _run(PY + ["scaffold/window.py", box, action])
+            return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action == "stop":                        # clean = graceful (finish unit); force = default (kill unit)
+            argv = PY + ["scaffold/window.py", box, "stop"] + (["--graceful"] if params.get("graceful") else [])
+            r = _run(argv); return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action == "run-start":
+            camp = _read_json(os.path.join(box, "campaign.json"), {}) or {}
+            if camp.get("state") == "running":
+                return {"ok": False, "error": "a run is already active — stop it first"}
+            hours = params.get("hours")
+            argv = ["bash", "scaffold/run_window.sh", box] + ([str(int(hours))] if hours else [])
+            logp = os.path.join(box, "work", "run_window.nohup.log")
+            os.makedirs(os.path.dirname(logp), exist_ok=True)
+            subprocess.Popen(argv, stdout=open(logp, "a"), stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+            return {"ok": True, "message": f"run started ({hours}h) — detached" if hours else "run continuing current window"}
+        if action == "hw-refresh":
+            subprocess.run(PY + ["scaffold/boxpaths.py", box, "--wake"], capture_output=True, timeout=20)  # best-effort wake
+            try:
+                ssh = subprocess.check_output(PY + ["scaffold/boxpaths.py", box, "--ssh"], text=True, timeout=15).split()
+            except Exception as e:
+                return {"ok": False, "error": f"resolver: {e}"}
+            try:
+                with open(os.path.join(SCAFFOLD, "hw_probe.sh")) as f:
+                    r = subprocess.run(ssh + ["bash -s"], stdin=f, capture_output=True, text=True, timeout=35)
+            except subprocess.TimeoutExpired:
+                return {"ok": False, "error": "probe timed out — box unreachable/asleep"}
+            if r.returncode != 0 or not r.stdout.strip():
+                return {"ok": False, "error": (r.stderr or "probe failed")[:200]}
+            try:
+                hw = json.loads(r.stdout)
+            except Exception:
+                return {"ok": False, "error": "probe returned non-JSON"}
+            try:
+                json.dump(hw, open(os.path.join(box, "work", "hw_status.json"), "w"))
+            except OSError:
+                pass
+            return {"ok": True, "hw": hw}
+        return {"ok": False, "error": f"unknown action: {action}"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "action timed out"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):  # quiet
         pass
@@ -944,6 +1038,19 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             return self._send(404, "not found", "text/plain")
         self._send_file(data, ctype, os.path.basename(target))
+
+    def do_POST(self):
+        if self.path.split("?")[0].startswith("/action/"):
+            action = self.path.split("?")[0][len("/action/"):]
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                params = json.loads(self.rfile.read(n) if n else b"{}")
+            except Exception:
+                params = {}
+            res = _do_action(action, params if isinstance(params, dict) else {})
+            self._send(200 if res.get("ok") else 400, json.dumps(res), "application/json")
+        else:
+            self._send(404, "not found", "text/plain")
 
     def do_GET(self):
         if self.path.startswith("/data"):
