@@ -956,7 +956,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._serve_report()
             except Exception as e:
                 self._send(500, "report error: " + str(e), "text/plain")
-        elif self.path in ("/", "/index.html"):
+        elif self.path.split("?")[0] in ("/", "/index.html"):   # tolerate ?cache-bust query strings
             self._send(200, _read(os.path.join(HERE, "index.html")), "text/html; charset=utf-8")
         else:
             self._send(404, "not found", "text/plain")
