@@ -71,6 +71,20 @@ Input tokens are paid on every unit; this pass cuts the per-unit read ~half.
   existing prefs/drawer.
 - **Deferred**: interactive/write API (design TBD); dashboard style-bible refresh (later).
 
+### Interactive Control page + write-API — `d92f58e`, `69cffd0`, `d71731f`
+The read-only dashboard gains a write layer (localhost-only) and a **Control tab** (command-deck layout).
+- **Control primitives** (reuse the CLI pattern): `window.py` gains pause/resume/hard-kill; `run_window.sh`
+  writes `work/driver.pid` + honors a PAUSE flag; `steer.py --delete` retracts an inbox note; new
+  `queue.py` (peek + inject-at-top) and `hw_probe.sh` (on-demand box disk/mem/cpu/temp/gpu, null-safe).
+- **Write-API**: `server.py` `do_POST` → `_do_action` routes `/action/<name>` to those CLIs. Safety:
+  binds 127.0.0.1; box validated against the served set (blocks path injection); args passed as argv
+  lists (no shell injection); `run-start` guarded; `hw-refresh` auto-wakes then probes, fails gracefully.
+- **Control page** (`index.html`): full-width run-control command bar (adaptive Start → Pause/Resume +
+  Clean/Force stop + Hard-kill, each behind a confirm modal) + cards for steering (add + retract),
+  time-window, queue (peek + inject), live hardware (Refresh), and a live-agent cockpit. Toast on every
+  action; state driven by a new `/data` `paused`/`hardware_live`. Verified in-browser end-to-end (a
+  steering add→retract round-trip through the live server; no console errors).
+
 ## Verification done
 - `window.py` — functional test (status / add-hours ± / stop / --graceful / guardrails / open-ended).
 - `run_window.sh` — `bash -n` + dry-run intact.
