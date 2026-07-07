@@ -39,6 +39,21 @@ scoring. **Not yet cut** — merge `release/0.4` → `main` + tag `v0.4` when re
 - `index.html` — **Spend & tokens** panel (cost chart + token/context/per-model breakdown) and a new
   **Context ingest cost** panel. Quality meter relabeled elo → agentic. Theme-aware.
 
+### Token efficiency — how agents read the scaffolding — `5f5232e`, `b42f47d`, `8aec98f` (+ box-repo compaction)
+Input tokens are paid on every unit; this pass cuts the per-unit read ~half.
+- **Compressed prompts** — `unit.md` 2,172→1,332 tok (−39%, −840 **every unit**), `consolidate.md` 886→533,
+  hybrid (YAML/tables for structured rules + tight prose for rationale). Comprehension A/B verified (a
+  fresh agent reproduced all 11 rules from the compressed `unit.md` alone — no regression).
+- **Doctrine grep-on-demand** — new `doctrine/INDEX.md` (rule→file map); prompts now grep the one rule
+  they need instead of preloading the ~12k-tok corpus. Cuts the boot read + prevents full-file reads.
+- **MEMORY head budget + one-time compaction** — the head is read in full every unit and had ballooned
+  to ~28k. Set a concrete budget (≤~12k; the "Known-good flags" block ~5.9k is the floor) and compacted
+  Precision390's live head **27,989→13,411 tok (−52%, ~14.5k saved/unit)**, relocating superseded
+  LFM/bitnet sagas to `MEMORY_ARCHIVE.md` verbatim (0 deletions — nothing lost).
+- **Net per-unit read (unit.md + MEMORY head): ~30.2k → ~14.7k (≈−51%).**
+- Deferred: doctrine prose compression (low leverage post-grep-on-demand); moving the flags block +
+  snapshot to a grep-on-demand reference file (would take the head to ~6–7k).
+
 ## Verification done
 - `window.py` — functional test (status / add-hours ± / stop / --graceful / guardrails / open-ended).
 - `run_window.sh` — `bash -n` + dry-run intact.
