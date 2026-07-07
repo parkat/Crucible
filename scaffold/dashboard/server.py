@@ -239,6 +239,7 @@ def _models_table(recs: list[dict]) -> list[dict]:
             g = groups[key] = {"model": model, "quant": quant,
                                "cpu_decode": None, "gpu_decode": None,
                                "cpu_prefill": None, "gpu_prefill": None,
+                               "agentic_score": None,
                                "quality": None, "bpb": None, "math_pass": None, "code_pass": None,
                                "roofline_eff": None, "depth_drop_pct": None,
                                "statuses": [], "n": 0, "last_epoch": 0}
@@ -253,7 +254,7 @@ def _models_table(recs: list[dict]) -> list[dict]:
             g[field] = val if cur is None else max(cur, val)
         _hi("gpu_decode" if gpu else "cpu_decode", r.get("decode_tok_s"))
         _hi("gpu_prefill" if gpu else "cpu_prefill", r.get("prefill_tok_s"))
-        for f in ("quality", "bpb", "math_pass", "code_pass", "roofline_eff"):
+        for f in ("agentic_score", "quality", "bpb", "math_pass", "code_pass", "roofline_eff"):
             src = "roofline_efficiency" if f == "roofline_eff" else f
             v = r.get(src)
             if v is not None and g[f] is None:
@@ -264,7 +265,10 @@ def _models_table(recs: list[dict]) -> list[dict]:
         # bug A: label the quality number by its TRUE source. BPB is the cross-model ruler
         # (lower = better); math/code is the objective grader; the raw `quality` scalar is a
         # single-model number and is NOT Elo — never blanket-label a populated `quality` "elo".
-        if g["bpb"] is not None:
+        if g["agentic_score"] is not None:
+            g["quality_kind"] = "agentic"                    # v0.4 ranked coordinate (0..100 display)
+            g["quality_score"] = round(g["agentic_score"] * 100, 1)
+        elif g["bpb"] is not None:
             g["quality_kind"] = "bpb"
             g["quality_score"] = round(g["bpb"], 4)
         elif g["math_pass"] is not None or g["code_pass"] is not None:
@@ -422,6 +426,57 @@ def _unit_events(objs: list[dict], max_events: int = 80, max_chars: int = 700) -
                 ev.append({"kind": "result", "text": txt[:max_chars]})
     return ev[-max_events:]
 
+def _token_tele(result: dict, objs: list) -> dict:
+    """Per-unit token / context / tok-s telemetry from a stream-json result line (+ the tailed
+    events for an approximate peak context fill). Every field tolerates absence -> 0/None."""
+    u = result.get("usage") or {}
+    mu = result.get("modelUsage") or {}
+    out = u.get("output_tokens") or 0
+    dapi = result.get("duration_api_ms") or 0
+    models, ctx_window = {}, 0
+    for mid, mv in mu.items():                 # per-model split (main vs sub-agent, e.g. sonnet vs haiku)
+        models[mid] = {"input": mv.get("inputTokens") or 0, "output": mv.get("outputTokens") or 0,
+                       "cache_read": mv.get("cacheReadInputTokens") or 0,
+                       "cache_creation": mv.get("cacheCreationInputTokens") or 0,
+                       "cost": mv.get("costUSD") or 0.0, "ctx_window": mv.get("contextWindow") or 0}
+        ctx_window = max(ctx_window, mv.get("contextWindow") or 0)
+    ctx_peak = 0                               # late-run assistant turns in the tail ~= peak context fill
+    for o in objs:
+        if o.get("type") == "assistant":
+            au = (o.get("message") or {}).get("usage") or {}
+            ctx_peak = max(ctx_peak, (au.get("input_tokens") or 0) + (au.get("cache_read_input_tokens") or 0)
+                           + (au.get("cache_creation_input_tokens") or 0))
+    return {"input": u.get("input_tokens") or 0, "output": out,
+            "cache_read": u.get("cache_read_input_tokens") or 0,
+            "cache_creation": u.get("cache_creation_input_tokens") or 0,
+            "dapi": dapi, "tok_s": round(out / (dapi / 1000.0), 1) if (out and dapi) else None,
+            "ctx_peak": ctx_peak, "ctx_window": ctx_window, "models": models}
+
+
+_EST_DIV = 4  # chars-per-token heuristic (dependency-free; ~English/mixed). Approximate — surfaced as such.
+
+def _est_tokens(text: str) -> int:
+    return round(len(text) / _EST_DIV)
+
+def _ingest_costs(boxes: list) -> list:
+    """Approximate token cost to ingest the key context files (dep-free chars/4). Lets the
+    orchestrating agent see what reading each file 'costs' its context window."""
+    import glob as _glob
+    root = os.path.dirname(SCAFFOLD)
+    paths = sorted(_glob.glob(os.path.join(root, "doctrine", "*.md")))
+    paths += [os.path.join(root, "scaffold", "prompts", p) for p in ("unit.md", "consolidate.md")]
+    for box in boxes:
+        paths += [os.path.join(box, f) for f in ("MEMORY.md", "campaign.json", "STEERING.md")]
+    out = []
+    for p in paths:
+        txt = _read(p)
+        if not txt:
+            continue
+        out.append({"file": os.path.relpath(p, root).replace("\\", "/"),
+                    "bytes": len(txt.encode("utf-8")), "est_tokens": _est_tokens(txt)})
+    return out
+
+
 def _agent(box: str, win_start) -> dict:
     """Live agent activity from the per-box driver log + per-unit `claude -p` JSON.
 
@@ -445,6 +500,9 @@ def _agent(box: str, win_start) -> dict:
         "cost_all_usd": 0.0,
         "last_unit": None,
         "recent_units": [],
+        "tokens_window": {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+        "tokens_all": {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+        "tok_s_window": None, "ctx_peak_window": 0, "ctx_window": 0, "models_window": {},
     }
 
     # ---- driver log: isolate the current window (everything after the last START) ----
@@ -503,7 +561,7 @@ def _agent(box: str, win_start) -> dict:
                "num": int(m.group(3)) if m.group(3) else None,
                "empty": sz == 0, "torn": False, "has_result": False,
                "cost": None, "is_error": None, "duration_ms": None,
-               "num_turns": None, "terminal_reason": None, "subtype": None}
+               "num_turns": None, "terminal_reason": None, "subtype": None, "tele": None}
         if sz > 0:
             objs = _jsonl(_tail(p, 96_000))  # the result line is at the tail
             result = next((o for o in reversed(objs) if o.get("type") == "result"), None)
@@ -513,6 +571,7 @@ def _agent(box: str, win_start) -> dict:
                            duration_ms=result.get("duration_ms"), num_turns=result.get("num_turns"),
                            terminal_reason=result.get("terminal_reason") or result.get("stop_reason"),
                            subtype=result.get("subtype"))
+                rec["tele"] = _token_tele(result, objs)
             elif not objs:
                 rec["torn"] = True  # non-empty but nothing parseable yet
         recs.append(rec)
@@ -524,6 +583,30 @@ def _agent(box: str, win_start) -> dict:
             info["cost_all_usd"] += r["cost"]
             if r["epoch"] >= win_start:
                 info["cost_window_usd"] += r["cost"]
+    # token / context telemetry aggregation (v0.4): sum tokens window+all, tok/s window, per-model split
+    dapi_win = 0.0
+    for r in recs:
+        t = r.get("tele")
+        if not t:
+            continue
+        in_win = r["epoch"] >= win_start
+        for k in ("input", "output", "cache_read", "cache_creation"):
+            info["tokens_all"][k] += t[k]
+            if in_win:
+                info["tokens_window"][k] += t[k]
+        if in_win:
+            dapi_win += t["dapi"]
+            info["ctx_peak_window"] = max(info["ctx_peak_window"], t["ctx_peak"])
+            info["ctx_window"] = max(info["ctx_window"], t["ctx_window"])
+            for mid, mv in t["models"].items():
+                agg = info["models_window"].setdefault(
+                    mid, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "cost": 0.0})
+                for k in ("input", "output", "cache_read", "cache_creation", "cost"):
+                    agg[k] += mv[k]
+    ow = info["tokens_window"]["output"]
+    info["tok_s_window"] = round(ow / (dapi_win / 1000.0), 1) if (ow and dapi_win) else None
+    for mv in info["models_window"].values():
+        mv["cost"] = round(mv["cost"], 4)
     window_units = [r for r in recs if r["epoch"] >= win_start]
     info["units_launched"] = max(info["current_unit"] or 0, len(window_units))
     info["units_completed"] = sum(1 for r in window_units if r["has_result"])
@@ -532,12 +615,14 @@ def _agent(box: str, win_start) -> dict:
     info["running"] = (terminal is None) and in_flight
     done = [r for r in recs if r["has_result"]]
     if done:
-        info["last_unit"] = {k: done[-1][k] for k in
+        info["last_unit"] = {**{k: done[-1][k] for k in
                              ("name", "kind", "num", "epoch", "cost", "is_error",
-                              "duration_ms", "num_turns", "terminal_reason", "subtype")}
+                              "duration_ms", "num_turns", "terminal_reason", "subtype")},
+                             "tele": done[-1].get("tele")}
     info["recent_units"] = [
-        {k: r[k] for k in ("kind", "num", "epoch", "cost", "is_error",
-                           "duration_ms", "num_turns", "empty", "torn", "has_result")}
+        {**{k: r[k] for k in ("kind", "num", "epoch", "cost", "is_error",
+                              "duration_ms", "num_turns", "empty", "torn", "has_result")},
+         "tele": r.get("tele")}
         for r in recs[-8:]]
 
     # ---- live transcript: the newest unit's stream (in-flight if running, else last done) ----
@@ -695,6 +780,7 @@ def build_box(box: str, now: float) -> dict:
             "prefill_tok_s": r.get("prefill_tok_s"),
             "ttft_s": r.get("ttft_s"),
             "quality": r.get("quality"),
+            "agentic_score": r.get("agentic_score"),
             "perf_per_watt": r.get("perf_per_watt"),
             "roofline_efficiency": r.get("roofline_efficiency"),
             "roofline_ceiling_tok_s": r.get("roofline_ceiling_tok_s"),
@@ -710,6 +796,7 @@ def build_box(box: str, now: float) -> dict:
             "decode": axis_best("decode_tok_s"),
             "prefill": axis_best("prefill_tok_s"),
             "quality": axis_best("quality"),
+            "agentic": axis_best("agentic_score"),
         },
         "roofline_now": None if not top else {
             "efficiency": top.get("roofline_efficiency"),
@@ -736,7 +823,7 @@ def build_data() -> dict:
         except Exception as e:  # one bad box must not blank the whole fleet
             boxes.append({"nick": os.path.basename(b.rstrip("/")),
                           "box_dir": os.path.basename(b.rstrip("/")), "error": str(e)})
-    return {"now": now, "boxes": boxes}
+    return {"now": now, "boxes": boxes, "ingest": _ingest_costs(BOXES)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
