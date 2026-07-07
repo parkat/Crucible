@@ -1067,8 +1067,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, "report error: " + str(e), "text/plain")
         elif self.path.split("?")[0] in ("/", "/index.html"):   # tolerate ?cache-bust query strings
             self._send(200, _read(os.path.join(HERE, "index.html")), "text/html; charset=utf-8")
+        elif self.path.split("?")[0].startswith("/fonts/"):     # static fonts (e.g. the System 3.0 Chicago face)
+            self._serve_font()
         else:
             self._send(404, "not found", "text/plain")
+
+    def _serve_font(self):
+        name = os.path.basename(self.path.split("?")[0])
+        path = os.path.join(HERE, "fonts", name)
+        if not os.path.isfile(path):
+            self._send(404, "no font", "text/plain")
+            return
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        mime = {"woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf", "otf": "font/otf"}.get(ext, "application/octet-stream")
+        with open(path, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        self.wfile.write(data)
 
 
 def main() -> int:
