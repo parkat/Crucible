@@ -78,36 +78,42 @@ def _phase(md: str) -> dict:
 _RES_TAGS = ("BOX", "HOST", "EITHER")
 
 def _queue_item(block: str, section: str) -> dict:
-    """Parse one top-level queue bullet into {id, title, tags, status, section}."""
-    text = re.sub(r"^[-*]\s+", "", block.strip())
+    """Parse one queue item into {id, title, tags, status, section}. Robust to the formats the
+    MEMORY head evolves through: '- '/'* ' bullets, '1. '/'1) ' numbered items, and '**→ [Kxx]**';
+    ids as a [Kxx] bracket OR a leading bold token (**K235**, **K230-poll**); tags [BOX]/[HOST]/
+    [EITHER] (backtick-wrapped ok). Title prefers the text after the first em/en-dash."""
+    text = re.sub(r"^\s*(\d+[.)]\s+|[-*]\s+)", "", block.strip())   # strip a list marker
+    text = text.replace("→", " ")
     status = None
-    m = re.match(r"^([✅❌◐◔◑◕✓✗])\s*", text)
+    m = re.match(r"^\s*([✅❌◐◔◑◕✓✗])\s*", text)
     if m:
-        status = m.group(1)
-        text = text[m.end():]
-    # the item id is the first bracket token that is NOT a resource tag (e.g. [K1], [LFM2-B])
+        status = m.group(1); text = text[m.end():]
+    # id: first bracket token that is NOT a resource tag; else a leading bold/backtick K-id
     bid = None
     for mm in re.finditer(r"\[([^\]]+)\]", text):
         if mm.group(1).strip().upper() not in _RES_TAGS:
-            bid = mm.group(1).strip()
-            break
-    tm = re.search(r"\*\*(.+?)\*\*", text, re.S)
-    title = tm.group(1) if tm else (text.splitlines() or [""])[0]
-    title = re.sub(r"\s+", " ", re.sub(r"[*`]", "", title)).strip()[:140]
+            bid = mm.group(1).strip(); break
+    if not bid:
+        m = re.search(r"\*\*\s*`?\[?\s*([A-Za-z]+-?\d[\w./-]*)", text)   # **K235**, **K230-poll**
+        if m:
+            bid = m.group(1).strip()
     tags = sorted({t.upper() for t in re.findall(r"\[(BOX|HOST|EITHER)\]", text, re.I)})
+    dm = re.search(r"[—–]\s+(.+)", text, re.S)                          # text after the em/en-dash
+    if dm:
+        title = dm.group(1)
+    else:
+        tm = re.search(r"\*\*(.+?)\*\*", text, re.S)
+        title = tm.group(1) if tm else (text.splitlines() or [""])[0]
+    title = re.sub(r"\s+", " ", re.sub(r"[*`]", "", title)).strip()[:160]
     return {"id": bid, "title": title, "tags": tags, "status": status, "section": section}
 
-def _bullets(sec: str) -> list[str]:
-    """Top-level '- ' bullet blocks (indented sub-units stay attached to their parent).
-
-    Also recognizes BLOCKQUOTED bullets ('> - ...'): the live queue top is often written as
-    blockquote prose under '### TAKEABLE NOW', and without stripping the '>' the parser skips it
-    and locks onto stale plain bullets deeper in the (unpruned) section — surfacing a days-old
-    'top'. (dashboard queue-parse bug, found on the Precision390 live window.)"""
+def _queue_blocks(sec: str) -> list[str]:
+    """Item blocks under a queue section: lines starting with '- '/'* ', 'N. '/'N) ', or '**→'.
+    Continuation lines stay attached to their item; a leading blockquote '>' is stripped."""
     blocks, cur = [], None
     for ln in sec.splitlines():
-        s = re.sub(r"^\s*>+\s?", "", ln)   # strip a leading blockquote marker, if any
-        if re.match(r"^[-*] ", s):
+        s = re.sub(r"^\s*>+\s?", "", ln)
+        if re.match(r"^\s*(\d+[.)]\s+|[-*]\s+|\*\*\s*→)", s):
             if cur is not None:
                 blocks.append("\n".join(cur))
             cur = [s]
@@ -117,34 +123,44 @@ def _bullets(sec: str) -> list[str]:
         blocks.append("\n".join(cur))
     return [b for b in blocks if b.strip()]
 
+_bullets = _queue_blocks   # back-compat alias: _steering() and others still call the old name
+
+_QUEUE_HEADERS = ("Queue (takeable top)", "Queue", "Open hypotheses (prioritized queue)", "Open hypotheses")
+
 def _queue(md: str) -> dict:
-    """The tagged hypothesis queue: open items (tagged), closed items, takeable-top id."""
-    body = _section(md, "Open hypotheses (prioritized queue)") or _section(md, "Open hypotheses")
+    """The tagged hypothesis queue: open items (tagged), closed items, takeable-top id. Finds the
+    queue section at ## OR ### level under any known header name (live head uses '### Queue
+    (takeable top)'; the template uses '## Open hypotheses ...')."""
     out = {"open": [], "closed": [], "takeable_id": None}
+    body = ""
+    for name in _QUEUE_HEADERS:
+        m = re.search(rf"^#{{2,3}}\s+{re.escape(name)}\b.*?$(.*?)(?=^#{{1,3}}\s|\Z)",
+                      md, re.MULTILINE | re.DOTALL)
+        if m and m.group(1).strip():
+            body = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.DOTALL).strip()
+            break
     if not body:
         return out
+    # optional '### TAKEABLE NOW / ### CLOSED' sub-sections; else a flat list (numbered or bulleted)
     parts = re.split(r"^###\s+(.*)$", body, flags=re.MULTILINE)
-    # parts = [pre, head1, body1, head2, body2, ...]; ignore the pre-amble
-    it = iter(parts[1:])
-    for head, sec in zip(it, it):
-        head = head.strip()
+    pairs = list(zip(parts[1::2], parts[2::2])) if len(parts) > 1 else [("", body)]
+    for head, sec in pairs:
         up = head.upper()
         section_closed = "CLOSED" in up or "DONE" in up
-        is_takeable = "TAKEABLE" in up
-        for blk in _bullets(sec):
-            item = _queue_item(blk, head)
-            # Classify done PER ITEM, not just by section head: most items are marked "[Kxx] DONE"
-            # inside the '### TAKEABLE NOW' prose, so a header-only rule miscounts them as open.
+        is_takeable = "TAKEABLE" in up or head == ""     # a flat queue's first open item is the top
+        for blk in _queue_blocks(sec):
+            item = _queue_item(blk, head or "queue")
+            # done PER ITEM, checked on the FIRST line only (the verbose numbered-queue descriptions
+            # mention 'closed'/'done' about OTHER things — never scan the whole block for it).
+            first = (blk.strip().splitlines() or [""])[0].upper()
             item_done = item.get("status") in ("✅", "❌", "✓", "✗") or \
-                bool(re.search(r"\b(DONE|CLOSED|NO-GO|SUBSUMED|DEPRECATED)\b|DEAD END", blk.upper()))
+                bool(re.search(r"\b(DONE|NO-GO|SUBSUMED|DEPRECATED)\b|DEAD END", first))
             if section_closed or item_done:
                 out["closed"].append(item)
             else:
                 out["open"].append(item)
                 if is_takeable and out["takeable_id"] is None:
                     out["takeable_id"] = item["id"] or item["title"]
-    # De-dup by id and resolve conflicts: an id that is OPEN (e.g. the live takeable top) must not
-    # also appear in closed — block-merged prose can pull a stray 'DONE' into a live item's block.
     open_ids = {i["id"] for i in out["open"] if i["id"]}
     out["closed"] = _dedup_items(i for i in out["closed"] if not (i["id"] and i["id"] in open_ids))
     out["open"] = _dedup_items(out["open"])
@@ -477,6 +493,46 @@ def _ingest_costs(boxes: list) -> list:
     return out
 
 
+_UNIT_CACHE: dict = {}   # path -> ((mtime_ns, size), rec). Historical unit files are immutable, so
+                         # after the first scan only the growing in-flight file is re-parsed — turns a
+                         # ~10s all-files scan (1097 files / 266MB) into a sub-100ms poll.
+
+def _parse_unit(path: str, fn: str, m):
+    """Parse one unit jsonl into its rec dict (cost/tokens/tele/…), memoized by (mtime, size).
+    A unit with a result line is COMPLETE and immutable, so once cached it's returned WITHOUT even
+    a stat() — the key perf win on WSL/DrvFs, where 1097 per-file stat syscalls otherwise dominate."""
+    c = _UNIT_CACHE.get(path)
+    if c is not None and c[1].get("has_result"):
+        return c[1]
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (st.st_mtime_ns, st.st_size)
+    if c is not None and c[0] == key:
+        return c[1]
+    sz = st.st_size
+    rec = {"name": fn, "path": path, "kind": m.group(1), "epoch": int(m.group(2)),
+           "num": int(m.group(3)) if m.group(3) else None,
+           "empty": sz == 0, "torn": False, "has_result": False,
+           "cost": None, "is_error": None, "duration_ms": None,
+           "num_turns": None, "terminal_reason": None, "subtype": None, "tele": None}
+    if sz > 0:
+        objs = _jsonl(_tail(path, 96_000))  # the result line is at the tail
+        result = next((o for o in reversed(objs) if o.get("type") == "result"), None)
+        if result:
+            rec["has_result"] = True
+            rec.update(cost=result.get("total_cost_usd"), is_error=result.get("is_error"),
+                       duration_ms=result.get("duration_ms"), num_turns=result.get("num_turns"),
+                       terminal_reason=result.get("terminal_reason") or result.get("stop_reason"),
+                       subtype=result.get("subtype"))
+            rec["tele"] = _token_tele(result, objs)
+        elif not objs:
+            rec["torn"] = True  # non-empty but nothing parseable yet
+    _UNIT_CACHE[path] = (key, rec)
+    return rec
+
+
 def _agent(box: str, win_start) -> dict:
     """Live agent activity from the per-box driver log + per-unit `claude -p` JSON.
 
@@ -552,29 +608,9 @@ def _agent(box: str, win_start) -> dict:
         m = _UNIT_RE.match(fn)
         if not m:
             continue
-        p = os.path.join(rundir, fn)
-        try:
-            sz = os.path.getsize(p)
-        except OSError:
-            continue
-        rec = {"name": fn, "path": p, "kind": m.group(1), "epoch": int(m.group(2)),
-               "num": int(m.group(3)) if m.group(3) else None,
-               "empty": sz == 0, "torn": False, "has_result": False,
-               "cost": None, "is_error": None, "duration_ms": None,
-               "num_turns": None, "terminal_reason": None, "subtype": None, "tele": None}
-        if sz > 0:
-            objs = _jsonl(_tail(p, 96_000))  # the result line is at the tail
-            result = next((o for o in reversed(objs) if o.get("type") == "result"), None)
-            if result:
-                rec["has_result"] = True
-                rec.update(cost=result.get("total_cost_usd"), is_error=result.get("is_error"),
-                           duration_ms=result.get("duration_ms"), num_turns=result.get("num_turns"),
-                           terminal_reason=result.get("terminal_reason") or result.get("stop_reason"),
-                           subtype=result.get("subtype"))
-                rec["tele"] = _token_tele(result, objs)
-            elif not objs:
-                rec["torn"] = True  # non-empty but nothing parseable yet
-        recs.append(rec)
+        rec = _parse_unit(os.path.join(rundir, fn), fn, m)
+        if rec is not None:
+            recs.append(rec)
     recs.sort(key=lambda r: (r["epoch"], r["num"] or 0))
 
     win_start = win_start or 0

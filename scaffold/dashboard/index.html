@@ -399,6 +399,15 @@
   .ing-row .b{flex:1; height:6px; border-radius:3px; background:var(--grid); overflow:hidden}
   .ing-row .b > span{display:block; height:100%; background:var(--accent); opacity:.8}
   .ing-row .t{flex:0 0 54px; text-align:right; color:var(--ink)}
+  /* first-load overlay (server cold-scan can take a few seconds) */
+  #loading-overlay{position:fixed; inset:0; z-index:9999; display:flex; align-items:center; justify-content:center;
+    background:var(--paper); transition:opacity .45s ease}
+  #loading-overlay.gone{opacity:0; pointer-events:none}
+  .lo-card{display:flex; flex-direction:column; align-items:center; gap:13px; font-family:var(--mono); text-align:center}
+  .lo-spin{width:38px; height:38px; border:3px solid var(--grid); border-top-color:var(--accent); border-radius:50%; animation:lo-rot .8s linear infinite}
+  @keyframes lo-rot{to{transform:rotate(360deg)}}
+  .lo-txt{color:var(--ink); font-size:14px; letter-spacing:.5px}
+  .lo-sub{color:var(--ink-faint); font-size:11px}
 
   /* ── customize drawer ── */
   .scrim{position:fixed; inset:0; background:rgba(20,18,13,.4); opacity:0; pointer-events:none; transition:opacity .25s ease; z-index:40}
@@ -446,6 +455,14 @@
 </style>
 </head>
 <body>
+
+<div id="loading-overlay">
+  <div class="lo-card">
+    <div class="lo-spin"></div>
+    <div class="lo-txt">Loading campaign data…</div>
+    <div class="lo-sub">first load reads the full unit history — a few seconds</div>
+  </div>
+</div>
 
 <div class="wrap">
 
@@ -636,8 +653,8 @@
     <!-- research round -->
     <div class="panel c3" id="research-panel" data-panel="research" data-panel-label="Research round">
       <h2>Latest research round<span class="livetag" id="research-tag" style="display:none">● RUNNING</span></h2>
-      <div class="sub" id="research-sub">results + fresh hypotheses from the last stall-triggered web-research unit</div>
-      <div id="research-body"><div class="muted">no research round yet — fires automatically when the front stalls</div></div>
+      <div class="sub" id="research-sub">results + fresh hypotheses from the last web-research refill unit</div>
+      <div id="research-body"><div class="muted">no research round this window — fires when the takeable queue empties (refill ≥5) or an avenue goes stale (novelty pivot)</div></div>
     </div>
 
     <!-- current activity -->
@@ -1174,8 +1191,8 @@ function renderResearchRound(b){
   const body=$("research-body"), sub=$("research-sub"), tag=$("research-tag");
   if(!rr){
     tag.style.display="none";
-    sub.textContent="results + fresh hypotheses from the last stall-triggered web-research unit";
-    body.innerHTML='<div class="muted">no research round yet — fires automatically when the front stalls (front_stall_K)</div>';
+    sub.textContent="results + fresh hypotheses from the last web-research refill unit";
+    body.innerHTML='<div class="muted">no research round this window — fires when the takeable queue empties (refill ≥5) or an avenue goes stale (novelty pivot)</div>';
     return;
   }
   tag.style.display=rr.running?"":"none";
@@ -1674,10 +1691,13 @@ async function poll(){
     renderFleet();
     const b=curBox();
     if(b) renderBox(b);
+    document.getElementById("loading-overlay")?.classList.add("gone");   // first data in -> reveal
     $("foot-poll").textContent="updated "+new Date().toLocaleTimeString();
   }catch(e){
     $("foot-poll").textContent="connection lost — retrying…";
     $("livedot").className="dot"; $("livetext").textContent="offline";
+    const lo=document.getElementById("loading-overlay");
+    if(lo && !lo.classList.contains("gone")){ const t=lo.querySelector(".lo-txt"); if(t) t.textContent="Connecting…"; }
   }
 }
 
