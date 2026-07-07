@@ -320,6 +320,20 @@ claude_cmd() {  # $1 = prompt file ; $2 = model ; echoes the exact argv (for --d
 
 SENTINEL="$BOX/work/QUEUE_EMPTY"
 LOGDIR="$BOX/work/run_window"; LOG="$BOX/work/run_window.log"
+STOP_FLAG="$BOX/work/STOP"; CURPID_FILE="$BOX/work/current_unit.pid"
+STOP_REQUESTED=0
+
+# run ONE unit: read the rendered prompt on stdin, background `claude` so its PID is recorded to
+# work/current_unit.pid (window.py's quick-stop kills that PID to halt fast), then wait + clean up.
+# Returns claude's exit code so each caller's `|| echo ...exited non-zero` still fires.
+run_unit() {   # $1 = model id ; stdin = rendered prompt
+  claude -p "$(cat)" --model "$1" --dangerously-skip-permissions $OUTFMT > "$UNIT_FILE" 2>>"$LOG" &
+  UNIT_PID=$!
+  echo "$UNIT_PID" > "$CURPID_FILE"
+  wait "$UNIT_PID"; local rc=$?
+  rm -f "$CURPID_FILE"
+  return $rc
+}
 
 # ---- dry-run: show the math + the exact invocation, then exit -----------------
 if [ "$DRY" -eq 1 ]; then
@@ -356,6 +370,17 @@ echo "run_window: $(date -Is) START box=$BOX winddown=$WINDDOWN deadline=$DEADLI
 UNIT=0
 while : ; do
   NOW="$(date +%s)"
+  # operator/agent quick-stop: window.py drops work/STOP -> halt now, but STILL consolidate + write
+  # the FINAL report (we break to the same consolidate block a natural winddown uses).
+  if [ -f "$STOP_FLAG" ]; then
+    echo "run_window: $(date -Is) STOP requested (window.py) -> consolidate + final report, then exit" | tee -a "$LOG"
+    rm -f "$STOP_FLAG"; STOP_REQUESTED=1
+    break
+  fi
+  # live clock: re-read the deadline every iteration so window.py add-hours/remove-time takes effect
+  # mid-run (START is fixed for the window; only DEADLINE/WINDDOWN move).
+  read -r DEADLINE MARGIN < <(python3 -c "import json;d=json.load(open('$BOX/campaign.json'));print(d.get('deadline_epoch') or 0, d.get('winddown_margin_frac') if d.get('winddown_margin_frac') is not None else 0.10)" 2>/dev/null || echo "$DEADLINE $MARGIN")
+  if [ "${DEADLINE:-0}" -eq 0 ]; then WINDDOWN=0; else WINDDOWN="$(python3 -c "print(int($DEADLINE - ($DEADLINE - $START) * $MARGIN))" 2>/dev/null || echo "$WINDDOWN")"; fi
   if [ "$WINDDOWN" -ne 0 ] && [ "$NOW" -ge "$WINDDOWN" ]; then
     echo "run_window: $(date -Is) WINDDOWN reached -> consolidate" | tee -a "$LOG"
     break
@@ -375,8 +400,7 @@ while : ; do
     THIS_PIVOT=1
     MODEL="$(pick_model research)"        # a research/cleanup unit, not a bench -> research-class model
     echo "run_window: $(date -Is) launch unit #$UNIT [NOVELTY PIVOT — avenue stale ${AVENUE_LEN} K-items >= $NOVELTY_PIVOT_K w/o new blessed; dom='${DOM_MODEL}'] [model=$MODEL]" | tee -a "$LOG"
-    render_novelty_pivot "$UNIT_PROMPT" "$DOM_MODEL" "$AVENUE_LEN" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
-      > "$UNIT_FILE" 2>>"$LOG" \
+    render_novelty_pivot "$UNIT_PROMPT" "$DOM_MODEL" "$AVENUE_LEN" | run_unit "$MODEL" \
       || echo "run_window: $(date -Is) unit #$UNIT (novelty-pivot) exited non-zero (logged; continuing)" | tee -a "$LOG"
     # reset the staleness baseline to now so the FRESH avenue gets its own full NOVELTY_PIVOT_K budget
     # before it too can be declared a rabbit hole (prevents re-pivoting every unit while it ramps).
@@ -385,14 +409,12 @@ while : ; do
     THIS_RESEARCH=1
     MODEL="$(pick_model research)"
     echo "run_window: $(date -Is) launch unit #$UNIT [RESEARCH — queue empty, refill >= $REFILL_MIN] [model=$MODEL]" | tee -a "$LOG"
-    render_research_refill "$UNIT_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
-      > "$UNIT_FILE" 2>>"$LOG" \
+    render_research_refill "$UNIT_PROMPT" | run_unit "$MODEL" \
       || echo "run_window: $(date -Is) unit #$UNIT (research) exited non-zero (logged; continuing)" | tee -a "$LOG"
   else
     MODEL="$(pick_model unit)"
     echo "run_window: $(date -Is) launch unit #$UNIT [model=$MODEL]" | tee -a "$LOG"
-    render "$UNIT_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
-      > "$UNIT_FILE" 2>>"$LOG" \
+    render "$UNIT_PROMPT" | run_unit "$MODEL" \
       || echo "run_window: $(date -Is) unit #$UNIT exited non-zero (logged; continuing)" | tee -a "$LOG"
   fi
   # session-limit backoff: if this unit was a limit no-op, drop it (don't count it) and sleep
@@ -420,8 +442,9 @@ echo "run_window: $(date -Is) consolidate [model=$MODEL]" | tee -a "$LOG"
 render "$CONSOLIDATE_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
   > "$LOGDIR/consolidate_$(date +%s).jsonl" 2>>"$LOG" \
   || echo "run_window: $(date -Is) consolidate exited non-zero (logged)" | tee -a "$LOG"
-python3 -c "import json;p='$BOX/campaign.json';d=json.load(open(p));d['state']='completed';json.dump(d,open(p,'w'),indent=2)"
-rm -f "$SENTINEL"
+FINAL_STATE="completed"; [ "${STOP_REQUESTED:-0}" -eq 1 ] && FINAL_STATE="stopped"
+python3 -c "import json;p='$BOX/campaign.json';d=json.load(open(p));d['state']='$FINAL_STATE';json.dump(d,open(p,'w'),indent=2)"
+rm -f "$SENTINEL" "$CURPID_FILE" "$STOP_FLAG"
 # render the just-sealed FINAL_*.md report(s) to PDF so the dashboard panel is ready immediately
 python3 scaffold/dashboard/report_pdf.py "$BOX" >/dev/null 2>&1 || true
 echo "run_window: $(date -Is) DONE box=$BOX units=$UNIT" | tee -a "$LOG"
