@@ -626,6 +626,32 @@
   .cfm{ border-radius:0; border:1px solid var(--ink); box-shadow:var(--shadow) }
   a.rep{ border:1px solid var(--ink); border-radius:0; background:var(--paper) }
   a.rep:hover{ background:var(--ink) } a.rep:hover *{ color:var(--paper) }
+
+  /* ── System 3.0 DESKTOP mode: menu bar + draggable/closable windows (paired with <script id=sys3-desktop>) ── */
+  body.sys3-desktop{ padding:22px 0 0; height:100vh; overflow:hidden }
+  body.sys3-desktop .wrap{ max-width:none; margin:0; padding:0; display:block; position:relative; height:calc(100vh - 22px) }
+  body.sys3-desktop .strip, body.sys3-desktop .tabbar, body.sys3-desktop .fleet{ display:none !important }
+  body.sys3-desktop .grid, body.sys3-desktop .grid.sectioned{ display:block }
+  body.sys3-desktop .panel, body.sys3-desktop .cmdbar{ position:absolute; display:none; width:360px; max-height:82vh; overflow:auto; margin:0 }
+  body.sys3-desktop .panel.c6{ width:520px } body.sys3-desktop .panel.c8{ width:600px } body.sys3-desktop .panel.c12{ width:660px }
+  body.sys3-desktop .cmdbar{ width:440px }
+  body.sys3-desktop .panel.win-open, body.sys3-desktop .cmdbar.win-open{ display:block !important }
+  body.sys3-desktop .panel > h2, body.sys3-desktop .cmdbar > h2{ cursor:grab; position:sticky; top:0; z-index:2 }
+  body.sys3-desktop .panel > h2::before{ display:none }
+  .s3-close{ position:absolute; left:6px; top:50%; transform:translateY(-50%); width:11px; height:11px; padding:0; background:var(--paper); border:1px solid var(--ink); cursor:pointer; z-index:4 }
+  .s3-close:hover{ background:var(--ink) }
+  .sys3-menubar{ position:fixed; top:0; left:0; right:0; height:22px; background:var(--paper); border-bottom:1px solid var(--ink); display:none; align-items:center; padding:0 6px; z-index:9000; font-family:var(--serif); font-weight:700; font-size:13px; color:var(--ink) }
+  body.sys3-desktop .sys3-menubar{ display:flex }
+  .sys3-menubar .s3m{ padding:0 11px; height:22px; display:flex; align-items:center; cursor:default; position:relative }
+  .sys3-menubar .s3m:hover, .sys3-menubar .s3m.open{ background:var(--ink); color:var(--paper) }
+  .sys3-menubar .s3m-clock{ margin-left:auto; font-family:var(--mono); font-weight:400; font-size:12px; padding-right:6px }
+  .s3-drop{ position:absolute; top:22px; left:0; min-width:190px; background:var(--paper); color:var(--ink); border:1px solid var(--ink); box-shadow:var(--shadow); z-index:9001; padding:3px 0; display:none }
+  .s3-drop .di{ color:var(--ink) }
+  .s3-drop.open{ display:block }
+  .s3-drop .di{ padding:4px 16px 4px 24px; font-size:12px; font-weight:700; white-space:nowrap; cursor:default; position:relative }
+  .s3-drop .di:hover{ background:var(--ink); color:var(--paper) }
+  .s3-drop .di.checked::before{ content:"\2713"; position:absolute; left:9px }
+  .s3-drop .sep{ height:0; border-top:1px solid var(--ink); opacity:.35; margin:3px 0 }
 </style>
 </head>
 <body>
@@ -2141,6 +2167,100 @@ setInterval(poll,4000);
 (function(){
   function wrap(){ document.querySelectorAll(".panel > h2").forEach(function(h){ if(!h.querySelector(".wt")) h.innerHTML='<span class="wt">'+h.innerHTML+'</span>'; }); }
   wrap();
+})();
+</script>
+<script id="sys3-desktop">
+/* System 3.0 DESKTOP — menu bar + draggable/closable windows + Apple-menu launcher.
+   Self-contained; paired with the body.sys3-desktop CSS. Delete both to drop back to the tabbed skin. */
+(function(){
+  var body=document.body, wrap=document.querySelector(".wrap");
+  if(!wrap) return;
+  body.classList.add("sys3-desktop");
+
+  // windowable elements = panels + the run command bar; give the cmdbar a synthetic title bar
+  var els=[].slice.call(wrap.querySelectorAll("[data-panel]")).filter(function(p){ return p.classList.contains("panel")||p.classList.contains("cmdbar"); });
+  els.forEach(function(p){ if(!p.querySelector(":scope > h2")){ var h=document.createElement("h2"); h.innerHTML='<span class="wt">'+(p.getAttribute("data-panel-label")||"Window")+'</span>'; p.insertBefore(h,p.firstChild); } });
+  function key(p){ return p.getAttribute("data-panel"); }
+  function byKey(k){ for(var i=0;i<els.length;i++) if(key(els[i])===k) return els[i]; return null; }
+
+  var POS={}, OPEN=null;
+  try{ POS=JSON.parse(localStorage.getItem("sys3-win-pos")||"{}"); }catch(e){}
+  try{ OPEN=JSON.parse(localStorage.getItem("sys3-win-open")||"null"); }catch(e){}
+  function savePos(){ try{ localStorage.setItem("sys3-win-pos",JSON.stringify(POS)); }catch(e){} }
+  function saveOpen(){ try{ localStorage.setItem("sys3-win-open",JSON.stringify(els.filter(function(p){return p.classList.contains("win-open");}).map(key))); }catch(e){} }
+
+  var Z=30, cascade=0;
+  function raise(p){ p.style.zIndex=(++Z); }
+  function place(p){ var k=key(p), q=POS[k]; if(q){ p.style.left=q.x+"px"; p.style.top=q.y+"px"; } else { var x=18+(cascade%5)*46, y=16+(cascade%5)*28+Math.floor(cascade/5)*22; cascade++; POS[k]={x:x,y:y}; p.style.left=x+"px"; p.style.top=y+"px"; } }
+  function openWin(p,focus){ if(!p.classList.contains("win-open")){ p.classList.add("win-open"); place(p); } if(focus!==false) raise(p); saveOpen(); syncMenu(); }
+  function closeWin(p){ p.classList.remove("win-open"); saveOpen(); syncMenu(); }
+
+  var DRAG=null;
+  function addChrome(p){
+    var h2=p.querySelector(":scope > h2"); if(!h2 || h2.__s3) return; h2.__s3=1;
+    var cb=document.createElement("button"); cb.className="s3-close"; cb.type="button"; cb.setAttribute("aria-label","Close");
+    h2.appendChild(cb);
+    cb.addEventListener("click",function(e){ e.stopPropagation(); closeWin(p); });
+    h2.addEventListener("mousedown",function(e){ if(e.target===cb) return; var r=p.getBoundingClientRect(), wr=wrap.getBoundingClientRect(); DRAG={p:p,dx:e.clientX-r.left,dy:e.clientY-r.top,wr:wr}; raise(p); e.preventDefault(); });
+    p.addEventListener("mousedown",function(){ raise(p); });
+  }
+  els.forEach(addChrome);
+  window.addEventListener("mousemove",function(e){ if(!DRAG) return; var x=Math.max(0,e.clientX-DRAG.wr.left-DRAG.dx), y=Math.max(0,e.clientY-DRAG.wr.top-DRAG.dy); DRAG.p.style.left=x+"px"; DRAG.p.style.top=y+"px"; POS[key(DRAG.p)]={x:x,y:y}; });
+  window.addEventListener("mouseup",function(){ if(DRAG){ savePos(); DRAG=null; } });
+
+  // ── menu bar ──
+  var APPLE='<svg viewBox="0 0 14 16" width="12" height="14"><path fill="currentColor" d="M11 5c-1 0-1.7.6-2.6.6C7.5 5.6 6.8 5 5.8 5 4 5 2.5 6.5 2.5 8.8c0 2.4 1.7 5 3.2 5 .7 0 1-.4 1.9-.4s1.1.4 1.9.4c1.5 0 3-2.6 3-5C13.4 6.9 12.2 5 11 5zM8.6 4.2c.6-.7.9-1.6.8-2.5-.8 0-1.7.5-2.2 1.1-.5.6-.9 1.5-.8 2.4.9 0 1.6-.4 2.2-1z"/></svg>';
+  var mb=document.createElement("div"); mb.className="sys3-menubar";
+  mb.innerHTML='<span class="s3m apple">'+APPLE+'</span><span class="s3m" id="s3m-view">View</span><span class="s3m-clock" id="s3m-clock"></span>';
+  body.insertBefore(mb, body.firstChild);
+  var apple=mb.querySelector(".apple"), viewM=mb.querySelector("#s3m-view");
+
+  var aDrop=document.createElement("div"); aDrop.className="s3-drop"; apple.appendChild(aDrop);
+  var vDrop=document.createElement("div"); vDrop.className="s3-drop"; viewM.appendChild(vDrop);
+  vDrop.innerHTML='<div class="di" data-v="light">Light</div><div class="di" data-v="dark">Dark</div><div class="sep"></div><div class="di" data-v="cleanup">Clean Up Windows</div><div class="di" data-v="closeall">Close All Windows</div>';
+
+  function buildApple(){
+    var h='<div class="di" data-act="about">About Crucible…</div><div class="di" data-act="cpanel">Control Panel…</div><div class="sep"></div>';
+    els.forEach(function(p){ h+='<div class="di win-item" data-k="'+key(p)+'">'+(p.getAttribute("data-panel-label")||key(p))+'</div>'; });
+    aDrop.innerHTML=h; syncMenu();
+  }
+  function syncMenu(){ aDrop.querySelectorAll(".win-item").forEach(function(d){ var p=byKey(d.getAttribute("data-k")); d.classList.toggle("checked", !!(p&&p.classList.contains("win-open"))); }); }
+  buildApple();
+
+  function closeMenus(){ aDrop.classList.remove("open"); vDrop.classList.remove("open"); apple.classList.remove("open"); viewM.classList.remove("open"); }
+  apple.addEventListener("click",function(e){ e.stopPropagation(); var o=aDrop.classList.contains("open"); closeMenus(); if(!o){ aDrop.classList.add("open"); apple.classList.add("open"); } });
+  viewM.addEventListener("click",function(e){ e.stopPropagation(); var o=vDrop.classList.contains("open"); closeMenus(); if(!o){ vDrop.classList.add("open"); viewM.classList.add("open"); } });
+  document.addEventListener("click",closeMenus);
+
+  aDrop.addEventListener("click",function(e){ var di=e.target.closest(".di"); if(!di) return;
+    var act=di.getAttribute("data-act");
+    if(act==="about") openAbout();
+    else if(act==="cpanel"){ var c=document.getElementById("customize-open"); if(c) c.click(); }
+    else if(di.getAttribute("data-k")){ var p=byKey(di.getAttribute("data-k")); if(p){ p.classList.contains("win-open")?closeWin(p):openWin(p,true); } }
+  });
+  vDrop.addEventListener("click",function(e){ var di=e.target.closest(".di"); if(!di) return; var v=di.getAttribute("data-v");
+    if(v==="light"||v==="dark"){ document.documentElement.setAttribute("data-theme",v); try{ if(window.PREFS){ PREFS.theme=v; localStorage.setItem("crucible-prefs",JSON.stringify(PREFS)); } }catch(e){} }
+    else if(v==="closeall"){ els.forEach(function(p){ p.classList.remove("win-open"); }); saveOpen(); syncMenu(); }
+    else if(v==="cleanup"){ cascade=0; POS={}; els.filter(function(p){return p.classList.contains("win-open");}).forEach(function(p){ place(p); }); savePos(); }
+  });
+
+  function openAbout(){
+    var w=document.getElementById("s3-about");
+    if(!w){ w=document.createElement("div"); w.className="panel"; w.id="s3-about"; w.setAttribute("data-panel","about"); w.setAttribute("data-panel-label","About"); w.style.width="330px";
+      w.innerHTML='<h2><span class="wt">About Crucible</span></h2><div style="padding-top:4px;font-family:var(--mono);font-size:11px;line-height:1.7"><b style="font-family:var(--serif);font-size:15px">Crucible</b><br>System 3.0 &middot; inference-optimization lab<br><br><span id="s3-about-body">a recursive search over one salvage box.</span></div>';
+      wrap.appendChild(w); addChrome(w); els.push(w);
+    }
+    try{ var b=window.DATA&&window.DATA.boxes&&window.DATA.boxes[0]; if(b){ var L=b.ledger||{}; w.querySelector("#s3-about-body").textContent="Target "+(b.nick||"?")+" · "+((L.total)||0)+" runs · "+((L.blessed)||0)+" blessed · front "+((L.front)||(b.pareto&&b.pareto.length)||0); } }catch(e){}
+    openWin(w,true);
+  }
+
+  function tick(){ var c=document.querySelector(".clock .t"), nick=document.querySelector(".brand .nick"), el=document.getElementById("s3m-clock"); if(el) el.textContent=(nick?nick.textContent.trim()+" ":"")+(c?"· "+c.textContent.trim():""); }
+  setInterval(tick,1000); setTimeout(tick,600);
+
+  var DEFAULT=["window","pareto","readout","ledger","findings","agent"];
+  var initial=(OPEN&&OPEN.length)?OPEN:DEFAULT;
+  els.forEach(function(p){ if(initial.indexOf(key(p))!==-1) openWin(p,false); });
+  syncMenu();
 })();
 </script>
 </body>

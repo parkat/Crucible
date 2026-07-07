@@ -102,6 +102,21 @@ UI-kit reference), applied after a mockup pass. Contained + fully reversible:
   loading overlay. Renamed the Control-page one to `renderHwLive`. Verified in-browser: both themes
   render with real data, overlay clears, no console errors.
 
+### System 3.0 desktop mode — menu bar + draggable windows + Apple-menu launcher
+Turns the reskinned dashboard into a full classic-Mac **desktop** (self-contained: `body.sys3-desktop`
+CSS + `<script id=sys3-desktop>`; remove both to drop back to the tabbed skin).
+- Panels + the run command-bar become absolutely-positioned, **draggable, closable windows** — a real
+  close box on each pinstripe title bar; window positions + the open-set persist in localStorage;
+  z-order rises on focus.
+- A **menu bar** with an **Apple-menu program launcher** listing every window (✓ = open) + About
+  Crucible + Control Panel (opens the customize drawer); a **View** menu (Light / Dark / Clean Up
+  Windows / Close All); and a live box + clock readout. Tabs / masthead / fleet-bar are hidden here.
+- **Chicago webfont** plumbing in place — `server.py` serves `scaffold/dashboard/fonts/` at `/fonts/`;
+  `@font-face ChicagoFLF` activates the moment the face is dropped in (falls back to system until then).
+Verified in-browser: default 6 windows open with real data, launcher lists all 30 windows with correct
+checkmarks, drag/close/focus work, no console errors. (Fixed en route: the open Apple-menu inherited
+white-on-white text — forced the dropdown's ink color.)
+
 ## Verification done
 - `window.py` — functional test (status / add-hours ± / stop / --graceful / guardrails / open-ended).
 - `run_window.sh` — `bash -n` + dry-run intact.
