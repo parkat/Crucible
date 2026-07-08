@@ -41,7 +41,9 @@
 
   /* ── windows (system.css .window, positioned + interactive) ── */
   #desktop .window{ position:absolute; display:flex; flex-direction:column; min-width:200px; min-height:110px; }
-  #desktop .window .window-pane{ flex:1 1 auto; overflow:auto; margin:0; min-height:0; }
+  #desktop .window .window-pane{ flex:1 1 auto; overflow:auto; margin:0; min-height:0; font-family:"Geneva_9",system-ui,sans-serif; }
+  .dk-label{ font-family:"Chicago",sans-serif; font-size:11px; margin:9px 0 3px; }
+  .dk-label:first-child{ margin-top:0; }
   .win-resize{ position:absolute; right:0; bottom:0; width:16px; height:16px; cursor:nwse-resize;
     background:var(--paper); border-left:1px solid var(--ink); border-top:1px solid var(--ink); z-index:3; }
   .win-resize::after{ content:""; position:absolute; inset:3px 3px 4px 4px;
@@ -209,6 +211,39 @@ const WM = {
   },
 };
 
+// ── DRAW : the shared 1-bit drawing kit — dither/hatch SVG; EVERY chart goes through here ──
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+const Draw = {
+  PATTERNS:'<defs>'+
+    '<pattern id="p-hatch" width="4" height="4" patternUnits="userSpaceOnUse"><path d="M0,4L4,0" stroke="#000" stroke-width="1"/></pattern>'+
+    '<pattern id="p-hatch2" width="4" height="4" patternUnits="userSpaceOnUse"><path d="M0,0L4,4" stroke="#000" stroke-width="1"/></pattern>'+
+    '<pattern id="p-dither" width="2" height="2" patternUnits="userSpaceOnUse"><rect width="1" height="1"/><rect x="1" y="1" width="1" height="1"/></pattern>'+
+    '<pattern id="p-dots" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="1" height="1"/></pattern></defs>',
+  FILLS:["#000","url(#p-hatch)","url(#p-dither)","url(#p-hatch2)","url(#p-dots)"],
+  _wrap(w,h,inner,fit){ return '<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'" preserveAspectRatio="'+(fit||"none")+'" style="display:block;font-family:Geneva_9,system-ui,sans-serif;overflow:visible">'+this.PATTERNS+inner+'</svg>'; },
+  progressBar(host,o){ o=o||{}; const w=220,h=o.h||14,p=Math.max(0,Math.min(1,(o.value||0)/(o.max||1)));
+    host.innerHTML=this._wrap(w,h,'<rect x="0.5" y="0.5" width="'+(w-1)+'" height="'+(h-1)+'" fill="none" stroke="#000"/><rect x="1.5" y="1.5" width="'+((w-3)*p)+'" height="'+(h-3)+'" fill="#000"/>'); },
+  gauge(host,o){ o=o||{}; const w=200,h=o.h||16,segs=o.segs||12,on=Math.round(Math.max(0,Math.min(1,(o.value||0)/(o.max||1)))*segs),sw=(w-1)/segs; let inner='';
+    for(let i=0;i<segs;i++) inner+='<rect x="'+(0.5+i*sw)+'" y="0.5" width="'+(sw-1)+'" height="'+(h-1)+'" fill="'+(i<on?"#000":"url(#p-dither)")+'" stroke="#000" stroke-width="0.5"/>';
+    host.innerHTML=this._wrap(w,h,inner); },
+  bar(host,o){ o=o||{}; const data=o.data||[],w=300,barH=15,gap=7,labelW=o.labelW||78,max=o.max||Math.max(1,...data.map(d=>d.value||0)),h=Math.max(20,gap+data.length*(barH+gap)); let inner='';
+    data.forEach((d,i)=>{ const y=gap+i*(barH+gap),bw=Math.max(0,(w-labelW-40)*((d.value||0)/max));
+      inner+='<text x="0" y="'+(y+barH-3)+'" font-size="11">'+esc(d.label)+'</text><rect x="'+labelW+'" y="'+y+'" width="'+bw+'" height="'+barH+'" fill="'+this.FILLS[i%this.FILLS.length]+'" stroke="#000"/><text x="'+(labelW+bw+4)+'" y="'+(y+barH-3)+'" font-size="10" font-family="Monaco">'+(d.value)+'</text>'; });
+    host.innerHTML=this._wrap(w,h,inner,"xMinYMin meet"); },
+  scatter(host,o){ o=o||{}; const pts=o.points||[],w=340,h=o.h||190; if(!pts.length){host.innerHTML='';return;}
+    const pl=32,pr=10,pt=10,pb=24,xs=pts.map(p=>p.x),ys=pts.map(p=>p.y); let xmin=Math.min(...xs),xmax=Math.max(...xs),ymin=Math.min(...ys),ymax=Math.max(...ys);
+    if(xmin===xmax){xmin-=1;xmax+=1;} if(ymin===ymax){ymin-=1;ymax+=1;}
+    const sx=v=>pl+((v-xmin)/(xmax-xmin))*(w-pl-pr),sy=v=>(h-pb)-((v-ymin)/(ymax-ymin))*(h-pb-pt);
+    let inner='<line x1="'+pl+'" y1="'+pt+'" x2="'+pl+'" y2="'+(h-pb)+'" stroke="#000"/><line x1="'+pl+'" y1="'+(h-pb)+'" x2="'+(w-pr)+'" y2="'+(h-pb)+'" stroke="#000"/>';
+    pts.forEach(p=>{ const x=sx(p.x),y=sy(p.y); if(p.ring) inner+='<circle cx="'+x+'" cy="'+y+'" r="5" fill="none" stroke="#000"/>';
+      inner+='<rect x="'+(x-2)+'" y="'+(y-2)+'" width="4" height="4" fill="#000"/>'+(p.label?'<text x="'+(x+7)+'" y="'+(y+3)+'" font-size="9">'+esc(p.label)+'</text>':''); });
+    inner+='<text x="'+((pl+w-pr)/2)+'" y="'+(h-5)+'" font-size="9" text-anchor="middle">'+esc(o.xlab||'')+'</text>';
+    host.innerHTML=this._wrap(w,h,inner,"xMidYMid meet"); },
+  sparkline(host,o){ o=o||{}; const d=o.data||[],w=120,h=o.h||22; if(d.length<2){host.innerHTML='';return;}
+    const mn=Math.min(...d),mx=Math.max(...d),pts=d.map((v,i)=>((i/(d.length-1))*(w-2)+1)+','+(((h-2)-((v-mn)/((mx-mn)||1))*(h-4))+1)).join(' ');
+    host.innerHTML=this._wrap(w,h,'<polyline points="'+pts+'" fill="none" stroke="#000" stroke-width="1"/>'); },
+};
+
 // ── PANELS registry (Phase 1: proof windows; more land in later phases) ──────────
 function fmtDur(s){ if(s==null)return"—"; if(s<0)return"overdue"; return Math.floor(s/3600)+"h "+Math.floor(s%3600/60)+"m"; }
 function fmtClock(ep){ if(!ep)return"—"; const d=new Date(ep*1000); return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); }
@@ -230,6 +265,20 @@ const PANELS = {
         '<div class="kv"><span class="k">launched</span><span class="v">'+(a.units_launched!=null?a.units_launched:"—")+'</span></div>'+
         '<div class="kv"><span class="k">cost (win)</span><span class="v">$'+((a.cost_window_usd||0).toFixed(2))+'</span></div>'+
         '<div class="kv"><span class="k">tok/s</span><span class="v">'+(a.tok_s_window!=null?a.tok_s_window:"—")+'</span></div>'; } },
+  drawkit: { title:"Drawing Kit", icon:ICON.chart, layout:{x:30,y:250,w:400,h:370},
+    render(b, pane){
+      pane.innerHTML =
+        '<div class="dk-label">progressBar — window elapsed</div><div id="dk-prog"></div>'+
+        '<div class="dk-label">gauge — decode tok/s</div><div id="dk-gauge"></div>'+
+        '<div class="dk-label">bar — ledger composition</div><div id="dk-bar"></div>'+
+        '<div class="dk-label">scatter — Pareto (decode × quality)</div><div id="dk-scat"></div>'+
+        '<div class="dk-label">sparkline — cost trend</div><div id="dk-spark"></div>';
+      Draw.progressBar($("#dk-prog",pane), {value:70, max:100});
+      Draw.gauge($("#dk-gauge",pane), {value:74, max:200});
+      Draw.bar($("#dk-bar",pane), {data:[{label:"contender",value:203},{label:"blessed",value:4},{label:"failed",value:119},{label:"degen",value:9}]});
+      Draw.scatter($("#dk-scat",pane), {points:[{x:150,y:1012,label:"Qwen0.5B",ring:true},{x:45,y:1078,label:"Llama3B",ring:true},{x:45,y:1065,ring:true},{x:24,y:1110,label:"DS7B",ring:true}], xlab:"decode tok/s"});
+      Draw.sparkline($("#dk-spark",pane), {data:[6,6.5,6.8,7,7.1,7,6.9,7.1,7.3,7.4]});
+    } },
 };
 const DEFAULT_OPEN = ["window","agent"];           // Phase 1 default workspace (cockpit expands later)
 
