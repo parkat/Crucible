@@ -86,6 +86,26 @@
   .patprev{ width:52px; height:52px; border:1px solid var(--ink); }
   .patpresets{ display:flex; gap:4px; flex-wrap:wrap; }
   .patpreset{ width:22px; height:22px; border:1px solid var(--ink); cursor:pointer; }
+  /* ── desktop icons ── */
+  .dicon{ position:absolute; width:76px; text-align:center; cursor:default; user-select:none; z-index:5; }
+  .dicon img{ width:32px; height:32px; display:block; margin:0 auto 2px; image-rendering:pixelated; }
+  .dicon .lbl{ font-family:"Geneva_9",sans-serif; font-size:11px; background:var(--paper); padding:0 3px; display:inline-block; }
+  .dicon.sel .lbl{ background:var(--ink); color:var(--paper); }
+  /* ── Finder list (reports) ── */
+  .frow{ display:flex; align-items:center; gap:8px; font-size:12px; padding:3px 4px; cursor:default; border-bottom:1px dotted #aaa; }
+  .frow img{ width:16px; height:16px; } .frow .sz{ margin-left:auto; font-family:"Monaco",monospace; font-size:10px; color:#555; }
+  .frow .lt{ font-family:"Monaco",monospace; font-size:8px; border:1px solid var(--ink); padding:0 3px; }
+  /* ── rendered doc (reports, read me) ── */
+  .s3doc{ font-family:"Geneva_9",sans-serif; font-size:12px; line-height:1.5; }
+  .s3doc h1{ font-family:"Chicago",sans-serif; font-size:17px; border-bottom:2px solid var(--ink); padding-bottom:4px; margin:2px 0 10px; }
+  .s3doc h2{ font-family:"Chicago",sans-serif; font-size:14px; margin:14px 0 5px; }
+  .s3doc h3{ font-family:"Chicago",sans-serif; font-size:12px; margin:11px 0 4px; }
+  .s3doc p{ margin:6px 0; } .s3doc ul{ margin:5px 0; padding-left:18px; } .s3doc code{ font-family:"Monaco",monospace; font-size:11px; }
+  .s3doc pre{ font-family:"Monaco",monospace; font-size:10px; border:1px solid var(--ink); padding:7px; overflow:auto; white-space:pre; }
+  .s3fc{ display:flex; flex-direction:column; margin:10px 0; font-size:11px; }
+  .s3fc .stg{ border:1px solid var(--ink); padding:7px 9px; } .s3fc .sh{ font-family:"Chicago",sans-serif; font-size:11px; margin-bottom:4px; }
+  .s3fc .stp{ display:flex; flex-wrap:wrap; gap:4px; } .s3fc .st{ border:1px solid var(--ink); padding:2px 6px; } .s3fc .st.inv{ background:var(--ink); color:var(--paper); }
+  .s3fc .ar{ align-self:center; font-family:"Chicago",sans-serif; font-size:14px; padding:2px 0; }
   .win-resize{ position:absolute; right:0; bottom:0; width:16px; height:16px; cursor:nwse-resize;
     background:var(--paper); border-left:1px solid var(--ink); border-top:1px solid var(--ink); z-index:3; }
   .win-resize::after{ content:""; position:absolute; inset:3px 3px 4px 4px;
@@ -223,6 +243,20 @@ const WM = {
     return rec;
   },
   closeWin(id){ const r=this.open[id]; if(!r)return; r.win.remove(); delete this.open[id]; this.saveOpen(); Shell.syncMenu(); },
+
+  spawn(id, o){                                    // one-off static-content window (About / report doc / Read Me)
+    if(this.open[id]){ this.focus(this.open[id].win); return this.open[id]; }
+    const g=Object.assign({x:80,y:60,w:o.w||460,h:o.h||360}, this.POS[id]||{});
+    const win=el("div","window"); win.style.left=g.x+"px"; win.style.top=g.y+"px"; win.style.width=g.w+"px"; win.style.height=g.h+"px";
+    win.innerHTML='<div class="title-bar"><button class="close"></button><h1 class="title">'+esc(o.title)+'</h1><button class="resize" style="visibility:hidden"></button></div><div class="window-pane">'+(o.html||"")+'</div><div class="win-resize"></div>';
+    this.desk.appendChild(win);
+    const rec={ win, pane:$(".window-pane",win), det:null, def:{render:()=>{}} };
+    this.open[id]=rec;
+    win.addEventListener("mousedown",()=>this.focus(win));
+    $(".close",win).addEventListener("click",(e)=>{ e.stopPropagation(); this.closeWin(id); });
+    this._wireInteract(id, win); this.focus(win);
+    return rec;
+  },
 
   _wireInteract(id, win){
     const self=this;
@@ -378,6 +412,62 @@ document.addEventListener("mouseover",(e)=>{ if(_painting===null)return; const c
 document.addEventListener("mouseup",()=>{ _painting=null; });
 function _paint(c){ const i=+c.getAttribute("data-i"); Pattern.data[i]=_painting; c.classList.toggle("on", !!_painting); Pattern.apply(); }
 
+// ── docs (Read Me / reports) + desktop icons ─────────────────────────────────────
+function md(src){
+  const e2=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  const inl=s=>e2(s).replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>").replace(/\*([^*]+)\*/g,"<em>$1</em>");
+  const out=[]; let inList=false,inCode=false,code=""; const closeL=()=>{ if(inList){ out.push("</ul>"); inList=false; } };
+  (src||"").split("\n").forEach(ln=>{
+    if(ln.trim().startsWith("```")){ if(inCode){ out.push("<pre>"+e2(code)+"</pre>"); code=""; inCode=false; } else { closeL(); inCode=true; } return; }
+    if(inCode){ code+=ln+"\n"; return; }
+    if(ln.trim()==="[[FLOWCHART]]"){ closeL(); out.push(FLOWCHART); return; }
+    let m;
+    if(m=ln.match(/^### (.*)/)){ closeL(); out.push("<h3>"+inl(m[1])+"</h3>"); }
+    else if(m=ln.match(/^## (.*)/)){ closeL(); out.push("<h2>"+inl(m[1])+"</h2>"); }
+    else if(m=ln.match(/^# (.*)/)){ closeL(); out.push("<h1>"+inl(m[1])+"</h1>"); }
+    else if(m=ln.match(/^\s*[-*] (.*)/)){ if(!inList){ out.push("<ul>"); inList=true; } out.push("<li>"+inl(m[1])+"</li>"); }
+    else if(!ln.trim()){ closeL(); }
+    else { closeL(); out.push("<p>"+inl(ln)+"</p>"); }
+  });
+  closeL(); return out.join("");
+}
+const FLOWCHART='<div class="s3fc">'+
+  '<div class="stg"><div class="sh">① Setup — one-time, human-guided</div><div class="stp"><span class="st">Pick box · tier · length</span><span class="st">SSH key + sudo</span><span class="st">Scan hardware</span><span class="st">Seed MEMORY.md</span></div></div>'+
+  '<div class="ar">↓</div><div class="stg"><div class="sh">② HOST — relauncher owns the loop &amp; clock</div><div class="stp"><span class="st">{ date vs deadline }</span><span class="st">wind-down → FINAL report</span><span class="st">queue empty → research</span><span class="st">else → normal unit</span></div></div>'+
+  '<div class="ar">↓</div><div class="stg"><div class="sh">③ ONE bounded unit — one queue item, then STOP</div><div class="stp"><span class="st">0 STEER</span><span class="st">1 DECIDE</span><span class="st">2 BUILD</span><span class="st inv">3 CORRECTNESS 🔒</span><span class="st inv">4 MEASURE 🔒</span><span class="st inv">5 EVALUATE 🔒</span><span class="st">6 RECORD</span></div></div></div>';
+const README_MD='# crucible\nA recursive, self-improving research harness that drives one throwaway target box over SSH to discover **maximally fast and intelligent batch-1 LLM inference** on **AVX-less, memory-bandwidth-limited salvage hardware**.\n\nOne Claude Code session (Opus 4.8) is the orchestrator, proposer, and judge — an open-ended search over engines, models, quants, kernels, compile flags, and algorithms, extending its own search code to push a Pareto frontier of speed vs. quality.\n\n## The one idea\n**Open hypothesis space, protected evaluation.** Everything worth trying is discovered, never hardcoded; a tiny kernel of method (correctness gating, measurement hygiene, the clock, the ledger, recovery, frozen eval assets) is protected so the optimizer cannot Goodhart its own ruler.\n\n## How it works\nThe loop lives outside any model session; the external relauncher owns the clock and launches one bounded unit at a time. 🔒 marks invariant-kernel steps.\n\n[[FLOWCHART]]\n\n## The four recorded axes\nNo scalar collapse — a Pareto archive over decode tok/s, prefill + TTFT, and quality (the agentic composite in v0.4), with perf-per-watt and peak RSS carried as context.';
+function openReadme(){ WM.spawn("readme", {title:"Read Me", w:570, h:440, html:'<div class="s3doc">'+md(README_MD)+'</div>'}); }
+function openAbout(){ const b=curBox()||{}, c=b.counts||{};
+  WM.spawn("about", {title:"About Crucible", w:344, h:250, html:
+    '<div style="display:flex;gap:14px;align-items:flex-start"><img src="'+ICON.mac+'" style="width:44px;height:44px;image-rendering:pixelated">'+
+    '<div style="font-family:Monaco,monospace;font-size:11px;line-height:1.7"><b style="font-family:Chicago,sans-serif;font-size:15px">Crucible</b><br>System 3 · inference-optimization lab<br><br>Target&nbsp; '+esc(b.nick||"—")+'<br>Ledger&nbsp; '+((c.blessed||0)+" blessed · "+(b.n_records||0)+" runs")+'<br>Built on system.css + interact.js</div></div>'+
+    '<div style="text-align:center;margin-top:16px"><img src="/vendor/classic-mac/dogcow.svg" style="width:38px;height:30px" title="Moof!"></div>'}); }
+async function openReport(rep){
+  const b=curBox()||{}; const box=(b.box_dir||"").split("/").pop()||b.nick;
+  const rec=WM.spawn("rep-"+rep.stem, {title:rep.stem.replace(/^FINAL_/,""), w:560, h:450, html:'<div class="s3doc"><p class="muted">loading…</p></div>'});
+  try{ const t=await (await fetch("/report/"+encodeURIComponent(box)+"/"+encodeURIComponent(rep.md))).text();
+    if(rec&&rec.pane) rec.pane.innerHTML='<div class="s3doc">'+md(t)+'</div>'; }
+  catch(e){ if(rec&&rec.pane) rec.pane.innerHTML='<div class="s3doc"><p>could not load report.</p></div>'; }
+}
+const Desktop = {
+  ICONS:[
+    {label:"Crucible HD", icon:ICON.mac, act:openAbout},
+    {label:"Control Panels", icon:ICON.folder, act:()=>WM.openWin("cpanel")},
+    {label:"Reports", icon:ICON.floppy, act:()=>WM.openWin("reports")},
+    {label:"Read Me", icon:ICON.doc, act:openReadme},
+    {label:"Pareto", icon:ICON.chart, act:()=>WM.openWin("pareto")},
+    {label:"Findings", icon:ICON.bulb, act:()=>WM.openWin("findings")},
+    {label:"Trash", icon:"/vendor/classic-mac/trash.svg", act:()=>Toast.show("Trash is empty.", true)},
+  ],
+  init(){ const desk=$("#desktop"); let y=14;
+    this.ICONS.forEach(ic=>{ const d=el("div","dicon"); d.style.right="20px"; d.style.top=y+"px"; y+=74;
+      d.innerHTML='<img src="'+ic.icon+'"><span class="lbl">'+ic.label+'</span>';
+      d.addEventListener("click",(e)=>{ e.stopPropagation(); document.querySelectorAll(".dicon").forEach(x=>x.classList.remove("sel")); d.classList.add("sel"); });
+      d.addEventListener("dblclick", ic.act); desk.appendChild(d); });
+    document.addEventListener("click",()=>document.querySelectorAll(".dicon.sel").forEach(x=>x.classList.remove("sel")));
+  },
+};
+
 // ── PANELS registry (Phase 1: proof windows; more land in later phases) ──────────
 function fmtDur(s){ if(s==null)return"—"; if(s<0)return"overdue"; return Math.floor(s/3600)+"h "+Math.floor(s%3600/60)+"m"; }
 function fmtClock(ep){ if(!ep)return"—"; const d=new Date(ep*1000); return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); }
@@ -486,6 +576,12 @@ const PANELS = {
       const row=(k,label,unit)=>{ const x=best[k]; if(!x)return ""; const cfg=x.config||{};
         return '<div class="dk-label">'+label+'</div><div class="kv" style="border:0;padding:0"><span class="v" style="font-size:15px">'+x.value+" "+(unit||"")+'</span></div><div class="muted feed-row">'+esc((cfg.model||"")+" "+(cfg.quant||""))+'</div>'; };
       pane.innerHTML = (row("decode","decode peak","tok/s")+row("prefill","prefill peak","tok/s")+row("quality","quality peak","")+row("agentic","agentic peak","")) || '<div class="muted">no results yet</div>'; } },
+  reports: { title:"Reports", icon:ICON.floppy, layout:{x:120,y:80,w:380,h:280}, details:true,
+    render(b, pane, det){ const reps=(b||{}).reports||[];
+      if(det) det.textContent = reps.length+" items";
+      if(!pane.__wired){ pane.__wired=true;
+        pane.addEventListener("dblclick",(e)=>{ const r=e.target.closest(".frow"); if(!r)return; const rp=((curBox()||{}).reports||[])[+r.getAttribute("data-i")]; if(rp) openReport(rp); }); }
+      pane.innerHTML = reps.length? reps.map((r,i)=>'<div class="frow" data-i="'+i+'"><img src="'+ICON.doc+'"><span>'+esc(r.stem.replace(/^FINAL_/,""))+'</span>'+(r.is_latest?'<span class="lt">latest</span>':"")+'<span class="sz">'+(r.size_kb||0)+'K</span></div>').join("") : '<div class="muted">no reports</div>'; } },
   cpanel: { title:"Control Panel", icon:ICON.folder, layout:{x:120,y:60,w:474,h:344},
     render(b, pane){ if($("#s3-patgrid",pane)) return;   // interactive settings: build once
       pane.innerHTML = '<div class="s3cp">'+
@@ -501,20 +597,6 @@ const PANELS = {
       const cur=document.body.getAttribute("data-theme")||"light";
       pane.querySelectorAll(".s3radio[data-theme]").forEach(r=>r.classList.toggle("on", r.getAttribute("data-theme")===cur));
       Pattern.apply(); } },
-  drawkit: { title:"Drawing Kit", icon:ICON.chart, layout:{x:30,y:250,w:400,h:370},
-    render(b, pane){
-      pane.innerHTML =
-        '<div class="dk-label">progressBar — window elapsed</div><div id="dk-prog"></div>'+
-        '<div class="dk-label">gauge — decode tok/s</div><div id="dk-gauge"></div>'+
-        '<div class="dk-label">bar — ledger composition</div><div id="dk-bar"></div>'+
-        '<div class="dk-label">scatter — Pareto (decode × quality)</div><div id="dk-scat"></div>'+
-        '<div class="dk-label">sparkline — cost trend</div><div id="dk-spark"></div>';
-      Draw.progressBar($("#dk-prog",pane), {value:70, max:100});
-      Draw.gauge($("#dk-gauge",pane), {value:74, max:200});
-      Draw.bar($("#dk-bar",pane), {data:[{label:"contender",value:203},{label:"blessed",value:4},{label:"failed",value:119},{label:"degen",value:9}]});
-      Draw.scatter($("#dk-scat",pane), {points:[{x:150,y:1012,label:"Qwen0.5B",ring:true},{x:45,y:1078,label:"Llama3B",ring:true},{x:45,y:1065,ring:true},{x:24,y:1110,label:"DS7B",ring:true}], xlab:"decode tok/s"});
-      Draw.sparkline($("#dk-spark",pane), {data:[6,6.5,6.8,7,7.1,7,6.9,7.1,7.3,7.4]});
-    } },
 };
 const DEFAULT_OPEN = ["run","agent","telemetry","hardware"];   // the cockpit (operator's chosen default view)
 
@@ -531,6 +613,7 @@ const Shell = {
     bar.addEventListener("click",(e)=>{ const mi=e.target.closest(".mi"); if(!mi)return; e.stopPropagation(); this._toggle(mi); });
     document.addEventListener("click",()=>this._closeMenus());
     this.aDrop.addEventListener("click",(e)=>{ const di=e.target.closest(".di"); if(!di)return;
+      if(di.dataset.open==="__about"){ openAbout(); return; }
       if(di.dataset.open) WM.openWin(di.dataset.open); });
     this.vDrop.addEventListener("click",(e)=>{ const di=e.target.closest(".di"); if(!di)return;
       if(di.dataset.act==="cleanup") WM.tile();
@@ -554,7 +637,7 @@ const Shell = {
 
 // ── BOOT ─────────────────────────────────────────────────────────────────────────
 function boot(){
-  Theme.init(); WM.init(); Shell.init(); Cockpit.init(); Pattern.apply();
+  Theme.init(); WM.init(); Shell.init(); Cockpit.init(); Desktop.init(); Pattern.apply();
   let p=0; const bar=$("#boot-bar");
   const iv=setInterval(()=>{ p=Math.min(100,p+14); bar.style.width=p+"%";
     if(p>=100){ clearInterval(iv); $("#boot").classList.add("gone");
