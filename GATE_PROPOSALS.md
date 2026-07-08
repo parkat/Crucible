@@ -106,9 +106,21 @@ future plugins on the same registry.
 
 ## Proposal E (v0.4) — agentic graders are format-fragile + token-truncated; harden before the composite is trusted for ranking  (2026-07-08)
 
-**Status: ✅ APPROVED — human gate passed 2026-07-08, operator parker@pureturbos.com. Implemented on
-`release/0.4` (graders + budget in this pass; asset growth follows). Confirm-before-merge: the on-box
-re-eval of the four blessed configs (3B gsm8k should jump).** Surfaced by the operator on the
+**Status: ✅ APPROVED + ✅ CONFIRMED ON-BOX (2026-07-08, operator parker@pureturbos.com).** Implemented on
+`release/0.4` (graders + budget this pass; asset growth follows). **Confirm-before-merge PASSED** — on-box
+GSM8K re-eval of the blessed configs on the frozen seed set (pt-test-box, cuda50, `-ngl 99`):
+
+| config | GSM8K before (last-number) | GSM8K after (Proposal E) |
+|---|---|---|
+| Qwen2.5-0.5B Q4_K_M | 0.83 | 0.92 |
+| Llama-3.2-3B Q4_K_M | 0.17 | **1.00** |
+| Qwen2.5-3B Q4_K_M | 0.08 | **1.00** |
+
+The 3B GSM8K **jumped** (0.08/0.17 → 1.00) and the inversion is gone — 3B now ≥ 0.5B as real GSM8K demands.
+Cause confirmed: the models emit `#### N` / `\boxed{N}` markers the reworked grader extracts, vs the old
+last-number grabber. The grader is not merely lenient — it correctly scores a genuine 0.5B error wrong
+(0.92, not 1.0). Truncation artifact eliminated; agentic composite cleared to front-rank. (Asset growth to
+≥50 items/battery remains a follow-up to shrink variance.) Surfaced by the operator on the
 2026-07-07 18hr live window (the first on-box exercise of the agentic kernel from Proposal-v0.4 above).
 The plumbing works;
 the **numbers do not yet measure capability**, so the composite must NOT re-rank the blessed front

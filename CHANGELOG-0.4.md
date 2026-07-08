@@ -1,8 +1,9 @@
-# Crucible v0.4 — in progress (branch `release/0.4`)
+# Crucible v0.4 (2026-07-08)
 
 Efficiency-focused release: agent-driven window control, token/model telemetry, agentic-centered
-scoring, and a ground-up **System-3 dashboard** (interactive, with a localhost write-API). **Not yet
-cut** — merge `release/0.4` → `main` + tag `v0.4` when the operator says so.
+scoring, and a ground-up **System-3 dashboard** (interactive, with a localhost write-API). **Cut
+2026-07-08** — `release/0.4` merged to `main`, tagged `v0.4`; the Proposal-E agentic-grader
+confirm-before-merge passed on-box (3B GSM8K 0.08/0.17 → 1.00).
 
 ## Base (already on `main`)
 - **Anti-rabbit-hole novelty pivot** (`run_window.sh`) — after >100 K-items on one avenue with no new
@@ -178,9 +179,9 @@ client was **rebuilt from scratch** as a System-3-native app — this is what v0
   compiles.
 
 ## Pending / deferred
-- **On-box (Proposal E confirm-before-merge)**: re-run `eval_config.py`'s agentic battery against the four
-  blessed staged GGUFs on the target (needs the box awake) — the 3B GSM8K scores should jump, confirming
-  the truncation fix. Until then treat `agentic_score` as plumbing-verified, not capability-valid.
+- **On-box (Proposal E confirm-before-merge): ✅ DONE (2026-07-08)** — GSM8K on the blessed configs
+  (pt-test-box, cuda50 `-ngl 99`): Llama-3.2-3B 0.17→1.00, Qwen2.5-3B 0.08→1.00, Qwen0.5B 0.83→0.92.
+  Inversion resolved; `agentic_score` cleared to front-rank. (See GATE_PROPOSALS.md.)
 - **Proposal E asset growth** (approved, not yet done): grow the agentic seed sets 10–16 → ≥50 items /
   battery to shrink the per-item quantum + variance, then re-freeze.
 - **Future plugins** on the same benchmark registry: heavier multi-step agentic harnesses
