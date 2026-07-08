@@ -1,0 +1,3 @@
+Recreations of classic Mac icons from github.com/thomasareed/Classic-Mac-icons.
+No explicit license stated by the author; used here for a private project.
+Replace with licensed/original art before any public distribution.
