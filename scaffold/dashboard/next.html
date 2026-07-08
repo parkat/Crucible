@@ -362,6 +362,31 @@ const PANELS = {
         Draw.gauge($("#hw-mem",pane), {value:mem.total?(mem.used/mem.total*100):0, max:100});
         Draw.gauge($("#hw-cpu",pane), {value:cpu.cores?(cpu.load1/cpu.cores*100):0, max:100});
         if(gpu.util!=null) Draw.gauge($("#hw-gpu",pane), {value:gpu.util, max:100}); } } },
+  pareto: { title:"Pareto frontier", icon:ICON.chart, layout:{x:24,y:24,w:390,h:290},
+    render(b, pane){ const front=((b||{}).front||[]);
+      const pts=front.map(f=>({ x:f.decode_tok_s||0, y:f.quality||0, ring:f.status==="blessed", label:(f.model||"").split("-").slice(0,1)[0] }));
+      pane.innerHTML='<div class="muted" style="margin-bottom:2px">decode tok/s × quality · ring = blessed</div><div id="pl"></div>';
+      if(pts.length) Draw.scatter($("#pl",pane), {points:pts, xlab:"decode tok/s", h:235});
+      else pane.innerHTML+='<div class="muted">no front yet</div>'; } },
+  leaderboard: { title:"Decode leaderboard", icon:ICON.trophy, layout:{x:430,y:24,w:340,h:260},
+    render(b, pane){ const seen={}, rows=[];
+      ((b||{}).models||[]).forEach(m=>{ const v=Math.max(m.gpu_decode||0,m.cpu_decode||0); if(!v)return;
+        const name=(m.model||"?").replace(/-Instruct|-Distill/g,"").split("-").slice(0,2).join("-")+" "+(m.quant||"");
+        if(!seen[name]||seen[name]<v){ seen[name]=v; } });
+      Object.keys(seen).map(n=>({label:n.slice(0,20),value:+seen[n].toFixed(1)})).sort((a,b)=>b.value-a.value).slice(0,8).forEach(r=>rows.push(r));
+      pane.innerHTML='<div class="muted" style="margin-bottom:2px">top decode (tok/s)</div><div id="lb"></div>';
+      Draw.bar($("#lb",pane), {data:rows, labelW:150}); } },
+  ledger: { title:"Ledger composition", icon:ICON.book, layout:{x:24,y:24,w:300,h:220},
+    render(b, pane, det){ const c=(b||{}).counts||{}, total=Object.values(c).reduce((a,x)=>a+(x||0),0);
+      if(det) det.textContent = total+" records";
+      const data=[["blessed",c.blessed],["contender",c.contender],["failed",c.failed],["degenerate",c.degenerate]]
+        .filter(d=>d[1]!=null).map(d=>({label:d[0],value:d[1]}));
+      pane.innerHTML='<div id="lc"></div>'; Draw.bar($("#lc",pane), {data, labelW:88}); }, details:true },
+  readout: { title:"Readout", icon:ICON.trophy, layout:{x:340,y:24,w:280,h:230},
+    render(b, pane){ const best=(b||{}).best||{};
+      const row=(k,label,unit)=>{ const x=best[k]; if(!x)return ""; const cfg=x.config||{};
+        return '<div class="dk-label">'+label+'</div><div class="kv" style="border:0;padding:0"><span class="v" style="font-size:15px">'+x.value+" "+(unit||"")+'</span></div><div class="muted feed-row">'+esc((cfg.model||"")+" "+(cfg.quant||""))+'</div>'; };
+      pane.innerHTML = (row("decode","decode peak","tok/s")+row("prefill","prefill peak","tok/s")+row("quality","quality peak","")+row("agentic","agentic peak","")) || '<div class="muted">no results yet</div>'; } },
   drawkit: { title:"Drawing Kit", icon:ICON.chart, layout:{x:30,y:250,w:400,h:370},
     render(b, pane){
       pane.innerHTML =
