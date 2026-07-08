@@ -72,7 +72,7 @@ BIN = _resolve_bin(COMP)
 HELP = _help_text(BIN)
 
 
-def gen(prompt, n=160, temp=0.0, retries=2):
+def _build_cmd(prompt, n, temp):
     cmd = [BIN, "-m", MODEL, "-p", prompt, "-n", str(n),
            "--temp", str(temp), "-s", "1", "-t", THREADS]
     if _flag_ok(HELP, "--no-display-prompt"):
@@ -92,19 +92,43 @@ def gen(prompt, n=160, temp=0.0, retries=2):
             cmd += ["--no-cnv"]
     if NGL:
         cmd += ["-ngl", NGL]
+    return cmd
+
+
+def _run_once(cmd):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=900,
+                           stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return ""
+    return p.stdout or ""
+
+
+# K250/K252: a `<think>...</think>` reasoning preamble (DeepSeek-R1-distill and similar) can
+# consume the whole token budget before the model ever emits its actual answer — an open,
+# never-closed <think> tag is a harness truncation artifact, not a real (bad) response, and
+# must not be graded as one. Generic to any reasoning-tagged model, not a one-model patch.
+THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
+REASONING_RETRY_MULT = 4
+
+
+def gen(prompt, n=160, temp=0.0, retries=2):
+    cmd = _build_cmd(prompt, n, temp)
     # Generation is greedy+seeded (deterministic), so an empty result is NOT the model's
     # real output — it's a transient process/GPU-reload hiccup (the harness reloads the full
     # model per prompt). Retry empties a few times; a fresh process recovers the real output.
     out = ""
     for _ in range(retries + 1):
-        try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=900,
-                               stdin=subprocess.DEVNULL)
-        except subprocess.TimeoutExpired:
-            continue
-        out = p.stdout or ""
+        out = _run_once(cmd)
         if out.strip():
             break
+    if THINK_OPEN in out and THINK_CLOSE not in out:
+        # truncated mid-think: same prompt, a much larger budget, one shot only (not worth
+        # unbounded retries — if it still doesn't close, that's the real (long) answer).
+        big_cmd = _build_cmd(prompt, n * REASONING_RETRY_MULT, temp)
+        bigger = _run_once(big_cmd)
+        if bigger.strip():
+            out = bigger
     return out
 
 def load_jsonl(path):
