@@ -44,6 +44,20 @@
   #desktop .window .window-pane{ flex:1 1 auto; overflow:auto; margin:0; min-height:0; font-family:"Geneva_9",system-ui,sans-serif; }
   .dk-label{ font-family:"Chicago",sans-serif; font-size:11px; margin:9px 0 3px; }
   .dk-label:first-child{ margin-top:0; }
+  /* ── cockpit: buttons, feed, toasts, confirm ── */
+  .btnrow{ display:flex; gap:7px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+  .feed{ font-family:"Monaco",monospace; font-size:11px; line-height:1.55; }
+  .feed-row{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .std-input{ font-family:"Monaco",monospace; border:1px solid var(--ink); background:var(--paper); padding:1px 4px; }
+  #toasts{ position:fixed; right:14px; bottom:14px; z-index:9998; display:flex; flex-direction:column; gap:6px; }
+  .toast{ background:var(--paper); border:1px solid var(--ink); box-shadow:2px 2px 0 var(--ink); padding:6px 12px;
+    font-size:12px; max-width:340px; font-family:"Geneva_9",sans-serif; transition:opacity .3s; }
+  .toast.err{ font-weight:bold; }
+  .cfm-scrim{ position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; }
+  .cfm-scrim.open{ display:flex; }
+  #confirm .window{ position:static; width:330px; }
+  .cfm-t{ font-family:"Chicago",sans-serif; font-size:13px; margin-bottom:6px; }
+  .cfm-m{ font-size:12px; line-height:1.4; }
   .win-resize{ position:absolute; right:0; bottom:0; width:16px; height:16px; cursor:nwse-resize;
     background:var(--paper); border-left:1px solid var(--ink); border-top:1px solid var(--ink); z-index:3; }
   .win-resize::after{ content:""; position:absolute; inset:3px 3px 4px 4px;
@@ -91,6 +105,17 @@
 </div>
 
 <div id="desktop"></div>
+
+<div id="toasts"></div>
+<div id="confirm" class="cfm-scrim">
+  <div class="window">
+    <div class="title-bar"><h1 class="title">Confirm</h1></div>
+    <div class="window-pane">
+      <div class="cfm-t"></div><div class="cfm-m"></div>
+      <div class="btnrow" style="justify-content:flex-end"><button class="btn cfm-no">Cancel</button><button class="btn btn-default cfm-ok">OK</button></div>
+    </div>
+  </div>
+</div>
 
 <script>
 "use strict";
@@ -244,6 +269,46 @@ const Draw = {
     host.innerHTML=this._wrap(w,h,'<polyline points="'+pts+'" fill="none" stroke="#000" stroke-width="1"/>'); },
 };
 
+// ── write-API plumbing (POST /action) + toasts + confirm dialog ──────────────────
+function fmtTok(n){ n=n||0; return n>=1e6?(n/1e6).toFixed(1)+"M":n>=1e3?(n/1e3).toFixed(1)+"k":String(n); }
+function fmtAgo(ep){ if(!ep)return"—"; const s=Math.max(0,Date.now()/1000-ep); return s<90?Math.round(s)+"s ago":s<5400?Math.round(s/60)+"m ago":Math.round(s/3600)+"h ago"; }
+const API = { async post(action, params){ const b=curBox()||{}; const box=b.box_dir||b.nick;
+  try{ const r=await fetch("/action/"+action,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(Object.assign({box},params||{}))}); return await r.json(); }
+  catch(e){ return {ok:false,error:String(e)}; } } };
+const Toast = { show(msg, ok){ const t=el("div","toast "+(ok?"ok":"err")); t.textContent=msg; $("#toasts").appendChild(t);
+  setTimeout(()=>{ t.style.opacity="0"; setTimeout(()=>t.remove(),300); }, ok?3200:6000); } };
+const Confirm = { _res:null,
+  wire(){ const s=$("#confirm"); $(".cfm-ok",s).addEventListener("click",()=>this._close(true));
+    $(".cfm-no",s).addEventListener("click",()=>this._close(false));
+    s.addEventListener("click",e=>{ if(e.target===s) this._close(false); }); },
+  ask(t,m){ return new Promise(res=>{ this._res=res; const s=$("#confirm"); $(".cfm-t",s).textContent=t; $(".cfm-m",s).textContent=m; s.classList.add("open"); }); },
+  _close(v){ $("#confirm").classList.remove("open"); if(this._res){ this._res(v); this._res=null; } } };
+const Actions = { async run(action, params, confirm){
+  if(confirm && !(await Confirm.ask(confirm.t, confirm.m))) return {cancelled:true};
+  const r = await API.post(action, params);
+  Toast.show(r.ok ? (r.message || (action+" ✓")) : (r.error || (action+" failed")), r.ok);
+  poll(); return r; } };
+const T_COST = [];                                   // rolling cost history for the telemetry sparkline
+const Cockpit = {
+  init(){ Confirm.wire();
+    document.addEventListener("click", (e)=>{
+      const rb=e.target.closest("[data-run]"); if(rb){ this.runAction(rb.getAttribute("data-run")); return; }
+      const hw=e.target.closest("[data-hw]"); if(hw){ Actions.run("hw-refresh"); return; }
+    });
+  },
+  runAction(a){
+    const hrs = ()=> parseFloat(($("#run-hrs")||{}).value) || 18;
+    const M = {
+      pause:{a:"pause"}, resume:{a:"resume"},
+      clean:{a:"stop", p:{graceful:true}, c:{t:"Clean stop?", m:"Finish the current unit, then consolidate + write the FINAL report (nothing lost)."}},
+      force:{a:"stop", p:{}, c:{t:"Force stop?", m:"Kill the in-flight unit now, then still consolidate + write the report."}},
+      kill:{a:"hard-kill", p:{}, c:{t:"Hard kill?", m:"Terminate driver + unit immediately — NO consolidate or report. Escape hatch only."}},
+      start:{a:"run-start", p:{hours:hrs()}, c:{t:"Start a run?", m:"Launches a "+hrs()+"h window and spends real weekly cap."}},
+    }[a];
+    if(M) Actions.run(M.a, M.p, M.c);
+  },
+};
+
 // ── PANELS registry (Phase 1: proof windows; more land in later phases) ──────────
 function fmtDur(s){ if(s==null)return"—"; if(s<0)return"overdue"; return Math.floor(s/3600)+"h "+Math.floor(s%3600/60)+"m"; }
 function fmtClock(ep){ if(!ep)return"—"; const d=new Date(ep*1000); return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); }
@@ -257,14 +322,46 @@ const PANELS = {
         '<div class="kv"><span class="k">to winddown</span><span class="v">'+fmtDur(b.remaining_winddown_s)+'</span></div>'+
         '<div class="kv"><span class="k">to deadline</span><span class="v">'+fmtDur(b.remaining_s)+'</span></div>'+
         '<div class="kv"><span class="k">deadline</span><span class="v">'+fmtClock(c.deadline_epoch)+'</span></div>'; } },
-  agent: { title:"Live agent", icon:ICON.zap, layout:{x:340,y:24,w:320,h:200}, details:true,
-    render(b, pane, det){ const a=(b||{}).agent||{};
-      if(det) det.textContent = "driver · claude -p";
+  run: { title:"Run control", icon:ICON.play, layout:{x:24,y:24,w:300,h:150},
+    render(b, pane, det){
+      const st=(b&&((b.window||{}).state||(b.campaign||{}).state))||"idle", paused=!!(b&&b.paused), running=st==="running";
+      if(det) det.textContent = paused?"paused":running?"running":st;
+      pane.innerHTML = running
+        ? '<div class="btnrow">'+(paused?'<button class="btn btn-default" data-run="resume">Resume</button>':'<button class="btn" data-run="pause">Pause</button>')+
+          '<button class="btn" data-run="clean">Clean stop</button><button class="btn" data-run="force">Force stop</button><button class="btn" data-run="kill">Hard-kill</button></div>'
+        : '<div class="btnrow"><input class="std-input" id="run-hrs" value="18" style="width:40px"> hrs <button class="btn btn-default" data-run="start">Start run</button></div><div class="muted" style="margin-top:8px">state: '+esc(st)+'</div>'; } },
+  agent: { title:"Live agent", icon:ICON.zap, layout:{x:24,y:190,w:340,h:230}, details:true,
+    render(b, pane, det){ const a=(b||{}).agent||{}, live=a.live||{};
+      if(det) det.textContent = (live.running?"running":"idle")+" · unit #"+(live.num||a.current_unit||"—");
+      const rows=(live.events||[]).slice(-12).map(e=>{ const tool=e.kind==="tool"; const t=esc((e.text||e.description||"").replace(/\s+/g," ").slice(0,90));
+        return '<div class="feed-row">'+(tool?"$":"◇")+' '+t+'</div>'; }).join("");
+      pane.innerHTML = '<div class="feed">'+(rows||'<div class="muted">no live unit — the feed streams while a unit runs</div>')+'</div>'; } },
+  telemetry: { title:"Telemetry", icon:ICON.coins, layout:{x:380,y:24,w:270,h:270},
+    render(b, pane){ const a=(b||{}).agent||{}, tw=a.tokens_window||{};
       pane.innerHTML =
-        '<div class="kv"><span class="k">unit</span><span class="v">#'+(a.current_unit!=null?a.current_unit:"—")+'</span></div>'+
-        '<div class="kv"><span class="k">launched</span><span class="v">'+(a.units_launched!=null?a.units_launched:"—")+'</span></div>'+
-        '<div class="kv"><span class="k">cost (win)</span><span class="v">$'+((a.cost_window_usd||0).toFixed(2))+'</span></div>'+
-        '<div class="kv"><span class="k">tok/s</span><span class="v">'+(a.tok_s_window!=null?a.tok_s_window:"—")+'</span></div>'; } },
+        '<div class="dk-label">decode tok/s — '+(a.tok_s_window!=null?a.tok_s_window:"—")+'</div><div id="tl-toks"></div>'+
+        '<div class="dk-label">context fill — '+(a.ctx_window?Math.round((a.ctx_peak_window||0)/a.ctx_window*100):0)+'%</div><div id="tl-ctx"></div>'+
+        '<div class="kv"><span class="k">output tok</span><span class="v">'+fmtTok(tw.output||0)+'</span></div>'+
+        '<div class="dk-label">cost / window — $'+((a.cost_window_usd||0).toFixed(2))+'</div><div id="tl-cost"></div>';
+      Draw.gauge($("#tl-toks",pane), {value:a.tok_s_window||0, max:200});
+      Draw.progressBar($("#tl-ctx",pane), {value:(a.ctx_window?(a.ctx_peak_window||0)/a.ctx_window*100:0), max:100});
+      const c=a.cost_window_usd||0; if(!T_COST.length || T_COST[T_COST.length-1]!==c){ T_COST.push(c); if(T_COST.length>40)T_COST.shift(); }
+      Draw.sparkline($("#tl-cost",pane), {data:T_COST.slice(), h:26}); } },
+  hardware: { title:"Box hardware", icon:ICON.cpu, layout:{x:676,y:24,w:280,h:280}, details:true,
+    render(b, pane, det){ const hw=(b||{}).hardware_live;
+      if(det) det.textContent = hw ? ("updated "+fmtAgo(hw.epoch)) : "on-demand";
+      let h='<div class="btnrow"><button class="btn" data-hw="refresh">⟳ Refresh</button><span class="muted">'+(hw?"":"hit Refresh")+'</span></div>';
+      if(hw){ const cpu=hw.cpu||{}, mem=hw.mem_mib||{}, gpu=hw.gpu||{}, d0=(hw.disk||[])[0]||{};
+        h+='<div class="dk-label">disk — '+(d0.avail||"?")+" free · "+(d0.pct||"?")+'</div><div id="hw-disk"></div>'+
+           '<div class="dk-label">mem — '+((mem.used||0)/1024).toFixed(1)+" / "+((mem.total||0)/1024).toFixed(1)+' G</div><div id="hw-mem"></div>'+
+           '<div class="dk-label">cpu — '+(cpu.load1!=null?cpu.load1+" load":"")+(cpu.temp_c&&cpu.temp_c!=="null"?" · "+cpu.temp_c+"°C":"")+'</div><div id="hw-cpu"></div>'+
+           (gpu.util!=null?'<div class="dk-label">gpu — '+gpu.util+"%"+(gpu.temp!=null?" · "+gpu.temp+"°C":"")+'</div><div id="hw-gpu"></div>':""); }
+      pane.innerHTML=h;
+      if(hw){ const cpu=hw.cpu||{}, mem=hw.mem_mib||{}, gpu=hw.gpu||{}, d0=(hw.disk||[])[0]||{};
+        Draw.gauge($("#hw-disk",pane), {value:parseInt(d0.pct)||0, max:100});
+        Draw.gauge($("#hw-mem",pane), {value:mem.total?(mem.used/mem.total*100):0, max:100});
+        Draw.gauge($("#hw-cpu",pane), {value:cpu.cores?(cpu.load1/cpu.cores*100):0, max:100});
+        if(gpu.util!=null) Draw.gauge($("#hw-gpu",pane), {value:gpu.util, max:100}); } } },
   drawkit: { title:"Drawing Kit", icon:ICON.chart, layout:{x:30,y:250,w:400,h:370},
     render(b, pane){
       pane.innerHTML =
@@ -280,7 +377,7 @@ const PANELS = {
       Draw.sparkline($("#dk-spark",pane), {data:[6,6.5,6.8,7,7.1,7,6.9,7.1,7.3,7.4]});
     } },
 };
-const DEFAULT_OPEN = ["window","agent"];           // Phase 1 default workspace (cockpit expands later)
+const DEFAULT_OPEN = ["run","agent","telemetry","hardware"];   // the cockpit (operator's chosen default view)
 
 // ── SHELL : menu bar, apple launcher, clock, boot ────────────────────────────────
 const Shell = {
@@ -318,7 +415,7 @@ const Shell = {
 
 // ── BOOT ─────────────────────────────────────────────────────────────────────────
 function boot(){
-  WM.init(); Shell.init();
+  WM.init(); Shell.init(); Cockpit.init();
   let p=0; const bar=$("#boot-bar");
   const iv=setInterval(()=>{ p=Math.min(100,p+14); bar.style.width=p+"%";
     if(p>=100){ clearInterval(iv); $("#boot").classList.add("gone");
