@@ -349,15 +349,24 @@ at the next Orient.
 
 ## Watch it live — the dashboard
 
-A read-only, auto-refreshing monitor runs on the **host** (it never polls the target — that
+An auto-refreshing **System-3 desktop** runs on the **host** (it never polls the target — that
 would perturb the very numbers the campaign measures). It renders entirely from host-side
-artifacts and tolerates files being appended to mid-read.
+artifacts and tolerates files being appended to mid-read. Beyond monitoring it can **steer**: a
+localhost-only write-API shells to the same vetted CLIs you'd run by hand (`steer.py`, `window.py`,
+`queue.py`, the hardware probe) — inject a steering note, arm/extend/stop the time window, take a
+queue item, or re-probe hardware, all from the desktop.
 
 ```bash
 python3 scaffold/dashboard/server.py boxes/<nick>     # one box
 python3 scaffold/dashboard/server.py boxes            # the whole fleet (one panel per box)
 # then open the printed http://127.0.0.1:8787/   (override with --port / --host)
 ```
+
+The client is a ground-up System-3 build (vendored `system.css` + `interact.js`, real Chicago/Geneva/
+Monaco faces): draggable/resizable windows, an Apple-menu launcher, a Control Panel (themes — 1-bit /
+Night / Amber / Green — a draw-your-own desktop-pattern editor, and a UI-scale/Text-Size control), a
+Reports floppy that opens FINAL reports as rendered documents, a Read Me, and a boot sequence + chime.
+Every chart (Pareto scatter, gauges, sparklines, bars) is drawn 1-bit through one shared `Draw` module.
 
 Per box it shows, all from `boxes/<nick>/`:
 
@@ -412,7 +421,8 @@ crucible/
     steer.py               drop an operator steering note into a box's STEERING.md inbox
     hardware_scan.sh       scans a box into a COMPLETE contract (ISA, BW, GPU, Wake-on-LAN)
     prompts/               unit.md + consolidate.md (box-agnostic; injected per run)
-    dashboard/             host-side live monitor (server.py + index.html; fleet-aware)
+    dashboard/             host-side System-3 desktop: server.py (data + localhost write-API) +
+                           index.html (client); vendored system.css/interact.js under vendor/, fonts/
     ledger.py roofline.py correctness.py verify.py eval/   <- scoring + the frozen eval funnel
   boxes/<nickname>/      <- created per target box; the live campaign state (its own git repo)
     connection.json        how to reach it   | hardware.json  what it is

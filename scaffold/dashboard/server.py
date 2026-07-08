@@ -1065,10 +1065,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._serve_report()
             except Exception as e:
                 self._send(500, "report error: " + str(e), "text/plain")
-        elif self.path.split("?")[0] in ("/", "/index.html"):   # tolerate ?cache-bust query strings
+        elif self.path.split("?")[0] in ("/", "/index.html", "/next"):   # the System-3 client (/next kept as an alias)
             self._send(200, _read(os.path.join(HERE, "index.html")), "text/html; charset=utf-8")
-        elif self.path.split("?")[0] in ("/next", "/next.html"):  # the ground-up System-3 rebuild (in progress)
-            self._send(200, _read(os.path.join(HERE, "next.html")), "text/html; charset=utf-8")
         elif self.path.split("?")[0].startswith("/fonts/"):     # static fonts (e.g. the System 3.0 Chicago face)
             self._serve_font()
         elif self.path.split("?")[0].startswith("/vendor/"):    # vendored libs (system.css, interact.js, …)

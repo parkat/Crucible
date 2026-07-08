@@ -1,7 +1,8 @@
 # Crucible v0.4 — in progress (branch `release/0.4`)
 
-Efficiency-focused release: agent-driven window control, token/model telemetry, and agentic-centered
-scoring. **Not yet cut** — merge `release/0.4` → `main` + tag `v0.4` when ready.
+Efficiency-focused release: agent-driven window control, token/model telemetry, agentic-centered
+scoring, and a ground-up **System-3 dashboard** (interactive, with a localhost write-API). **Not yet
+cut** — merge `release/0.4` → `main` + tag `v0.4` when the operator says so.
 
 ## Base (already on `main`)
 - **Anti-rabbit-hole novelty pivot** (`run_window.sh`) — after >100 K-items on one avenue with no new
@@ -136,6 +137,32 @@ Second pass on the desktop, from operator feedback:
 - **Desktop icons** — a Reports floppy + a Read Me doc; double-click opens the reports window / a
   System-3-rendered README (with the 1-bit campaign flowchart).
 
+### Dashboard rebuilt from the ground up — the shipped client (supersedes the three System 3.0 skin/desktop entries above)
+The skin-over-the-old-design approach above was bloated (a foreign layout wearing a Mac costume), so the
+client was **rebuilt from scratch** as a System-3-native app — this is what v0.4 ships. The Python backend
+(`/data` + the `/action` write-API) is unchanged; only the client was replaced.
+- **Stack** — vendored **system.css** (System-6 monochrome components + Chicago/Geneva/Monaco faces) +
+  **interact.js** (drag/resize/snap) under `scaffold/dashboard/vendor/`; vendored icon sets (pixelarticons
+  MIT + 12 authentic classic-Mac recreations, `vendor/.../NOTICE.txt`).
+- **Architecture** — one file, module-shaped: `DATA` (poll `/data`) · `WM` (window manager on system.css
+  `.window` + interact.js) · `PANELS` (data-driven render registry) · `Draw` (one 1-bit SVG kit —
+  progress/gauge/bar/scatter/sparkline with dither/hatch fills) · `SHELL` (menu bar + Apple launcher +
+  boot) · `Actions`/`Cockpit` (write-API + confirms + toasts) · `Theme`/`UIScale`/`Pattern`/`Desktop`.
+- **Desktop metaphor** — hybrid tiled/floating windows (drag, resize, zoom, Clean-Up; positions persist),
+  Apple-menu launcher, richer desktop icons (Crucible HD / About + Dogcow, Control Panels, Reports floppy,
+  Read Me, Pareto/Findings aliases, Trash), a fuller boot sequence + a Web-Audio startup chime.
+- **Control Panel** — theme (true 1-bit / Night-invert / Amber & Green phosphor CRT via a whole-desktop
+  CSS filter) · an 8×8 draw-your-own desktop-pattern editor (+ presets) · **Text Size** (UI scale) ·
+  campaign settings. All persisted.
+- **Reports / Read Me** — the Reports floppy opens a Finder-list of FINAL reports; double-click renders one
+  as a System-3 document (mini-markdown). Read Me renders the README with the 1-bit campaign flowchart.
+- **Polish (operator feedback)** — dropdown-icon invert bug (white-on-white) scoped to the Apple logo;
+  monochrome `::selection` (was the OS accent orange); centered Apple glyph + taller menu bar; and the
+  text-scale fix (base font sizes raised + zoom-aware drag/resize + a storage-key bump so a stale small
+  scale can't pin the default).
+- **Swap** — `scaffold/dashboard/index.html` **is** the rebuild now; the old skinned dashboard and its
+  gitignored backup were removed from the branch; `server.py` serves it at `/` (with `/next` as an alias).
+
 ## Verification done
 - `window.py` — functional test (status / add-hours ± / stop / --graceful / guardrails / open-ended).
 - `run_window.sh` — `bash -n` + dry-run intact.
@@ -144,11 +171,17 @@ Second pass on the desktop, from operator feedback:
 - `server.py` — `/data` smoke test against real unit files (tokens, tok/s, per-model, ctx, ingest).
 - `index.html` — JS brace/paren balance identical to the working baseline (no imbalance introduced);
   dashboard serves `/` (200) and `/data` on the new code.
+- **Dashboard rebuild** — eyeballed in-browser (Chrome) against the live server across the build: every
+  panel renders on real `/data`; Control Panel themes (Amber/Green CRT) + pattern editor + Text Size;
+  Reports + Read Me render; drag tracks the cursor 1:1 under zoom; boot + chime; no console errors. Swap
+  verified: `/` serves the rebuild (system.css present, old skin absent), `/next` aliases, `server.py`
+  compiles.
 
 ## Pending / deferred
-- **On-box**: run `eval_config.py`'s agentic battery against a real staged GGUF on the target (needs the
-  box awake) to confirm live sub-scores + composite.
-- **Live visual eyeball** of the new dashboard panels (Chrome extension was not connected this session) —
-  open http://localhost:8787/.
+- **On-box (Proposal E confirm-before-merge)**: re-run `eval_config.py`'s agentic battery against the four
+  blessed staged GGUFs on the target (needs the box awake) — the 3B GSM8K scores should jump, confirming
+  the truncation fix. Until then treat `agentic_score` as plumbing-verified, not capability-valid.
+- **Proposal E asset growth** (approved, not yet done): grow the agentic seed sets 10–16 → ≥50 items /
+  battery to shrink the per-item quantum + variance, then re-freeze.
 - **Future plugins** on the same benchmark registry: heavier multi-step agentic harnesses
-  (tau-bench / SWE-bench). Further dashboard visual work is the announced "next dashboard step".
+  (tau-bench / SWE-bench).
