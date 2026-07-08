@@ -20,7 +20,7 @@ Usage:
 Then open http://localhost:8787/
 """
 from __future__ import annotations
-import argparse, json, os, re, sys, time
+import argparse, json, os, re, subprocess, sys, time
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -78,36 +78,42 @@ def _phase(md: str) -> dict:
 _RES_TAGS = ("BOX", "HOST", "EITHER")
 
 def _queue_item(block: str, section: str) -> dict:
-    """Parse one top-level queue bullet into {id, title, tags, status, section}."""
-    text = re.sub(r"^[-*]\s+", "", block.strip())
+    """Parse one queue item into {id, title, tags, status, section}. Robust to the formats the
+    MEMORY head evolves through: '- '/'* ' bullets, '1. '/'1) ' numbered items, and '**→ [Kxx]**';
+    ids as a [Kxx] bracket OR a leading bold token (**K235**, **K230-poll**); tags [BOX]/[HOST]/
+    [EITHER] (backtick-wrapped ok). Title prefers the text after the first em/en-dash."""
+    text = re.sub(r"^\s*(\d+[.)]\s+|[-*]\s+)", "", block.strip())   # strip a list marker
+    text = text.replace("→", " ")
     status = None
-    m = re.match(r"^([✅❌◐◔◑◕✓✗])\s*", text)
+    m = re.match(r"^\s*([✅❌◐◔◑◕✓✗])\s*", text)
     if m:
-        status = m.group(1)
-        text = text[m.end():]
-    # the item id is the first bracket token that is NOT a resource tag (e.g. [K1], [LFM2-B])
+        status = m.group(1); text = text[m.end():]
+    # id: first bracket token that is NOT a resource tag; else a leading bold/backtick K-id
     bid = None
     for mm in re.finditer(r"\[([^\]]+)\]", text):
         if mm.group(1).strip().upper() not in _RES_TAGS:
-            bid = mm.group(1).strip()
-            break
-    tm = re.search(r"\*\*(.+?)\*\*", text, re.S)
-    title = tm.group(1) if tm else (text.splitlines() or [""])[0]
-    title = re.sub(r"\s+", " ", re.sub(r"[*`]", "", title)).strip()[:140]
+            bid = mm.group(1).strip(); break
+    if not bid:
+        m = re.search(r"\*\*\s*`?\[?\s*([A-Za-z]+-?\d[\w./-]*)", text)   # **K235**, **K230-poll**
+        if m:
+            bid = m.group(1).strip()
     tags = sorted({t.upper() for t in re.findall(r"\[(BOX|HOST|EITHER)\]", text, re.I)})
+    dm = re.search(r"[—–]\s+(.+)", text, re.S)                          # text after the em/en-dash
+    if dm:
+        title = dm.group(1)
+    else:
+        tm = re.search(r"\*\*(.+?)\*\*", text, re.S)
+        title = tm.group(1) if tm else (text.splitlines() or [""])[0]
+    title = re.sub(r"\s+", " ", re.sub(r"[*`]", "", title)).strip()[:160]
     return {"id": bid, "title": title, "tags": tags, "status": status, "section": section}
 
-def _bullets(sec: str) -> list[str]:
-    """Top-level '- ' bullet blocks (indented sub-units stay attached to their parent).
-
-    Also recognizes BLOCKQUOTED bullets ('> - ...'): the live queue top is often written as
-    blockquote prose under '### TAKEABLE NOW', and without stripping the '>' the parser skips it
-    and locks onto stale plain bullets deeper in the (unpruned) section — surfacing a days-old
-    'top'. (dashboard queue-parse bug, found on the Precision390 live window.)"""
+def _queue_blocks(sec: str) -> list[str]:
+    """Item blocks under a queue section: lines starting with '- '/'* ', 'N. '/'N) ', or '**→'.
+    Continuation lines stay attached to their item; a leading blockquote '>' is stripped."""
     blocks, cur = [], None
     for ln in sec.splitlines():
-        s = re.sub(r"^\s*>+\s?", "", ln)   # strip a leading blockquote marker, if any
-        if re.match(r"^[-*] ", s):
+        s = re.sub(r"^\s*>+\s?", "", ln)
+        if re.match(r"^\s*(\d+[.)]\s+|[-*]\s+|\*\*\s*→)", s):
             if cur is not None:
                 blocks.append("\n".join(cur))
             cur = [s]
@@ -117,34 +123,44 @@ def _bullets(sec: str) -> list[str]:
         blocks.append("\n".join(cur))
     return [b for b in blocks if b.strip()]
 
+_bullets = _queue_blocks   # back-compat alias: _steering() and others still call the old name
+
+_QUEUE_HEADERS = ("Queue (takeable top)", "Queue", "Open hypotheses (prioritized queue)", "Open hypotheses")
+
 def _queue(md: str) -> dict:
-    """The tagged hypothesis queue: open items (tagged), closed items, takeable-top id."""
-    body = _section(md, "Open hypotheses (prioritized queue)") or _section(md, "Open hypotheses")
+    """The tagged hypothesis queue: open items (tagged), closed items, takeable-top id. Finds the
+    queue section at ## OR ### level under any known header name (live head uses '### Queue
+    (takeable top)'; the template uses '## Open hypotheses ...')."""
     out = {"open": [], "closed": [], "takeable_id": None}
+    body = ""
+    for name in _QUEUE_HEADERS:
+        m = re.search(rf"^#{{2,3}}\s+{re.escape(name)}\b.*?$(.*?)(?=^#{{1,3}}\s|\Z)",
+                      md, re.MULTILINE | re.DOTALL)
+        if m and m.group(1).strip():
+            body = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.DOTALL).strip()
+            break
     if not body:
         return out
+    # optional '### TAKEABLE NOW / ### CLOSED' sub-sections; else a flat list (numbered or bulleted)
     parts = re.split(r"^###\s+(.*)$", body, flags=re.MULTILINE)
-    # parts = [pre, head1, body1, head2, body2, ...]; ignore the pre-amble
-    it = iter(parts[1:])
-    for head, sec in zip(it, it):
-        head = head.strip()
+    pairs = list(zip(parts[1::2], parts[2::2])) if len(parts) > 1 else [("", body)]
+    for head, sec in pairs:
         up = head.upper()
         section_closed = "CLOSED" in up or "DONE" in up
-        is_takeable = "TAKEABLE" in up
-        for blk in _bullets(sec):
-            item = _queue_item(blk, head)
-            # Classify done PER ITEM, not just by section head: most items are marked "[Kxx] DONE"
-            # inside the '### TAKEABLE NOW' prose, so a header-only rule miscounts them as open.
+        is_takeable = "TAKEABLE" in up or head == ""     # a flat queue's first open item is the top
+        for blk in _queue_blocks(sec):
+            item = _queue_item(blk, head or "queue")
+            # done PER ITEM, checked on the FIRST line only (the verbose numbered-queue descriptions
+            # mention 'closed'/'done' about OTHER things — never scan the whole block for it).
+            first = (blk.strip().splitlines() or [""])[0].upper()
             item_done = item.get("status") in ("✅", "❌", "✓", "✗") or \
-                bool(re.search(r"\b(DONE|CLOSED|NO-GO|SUBSUMED|DEPRECATED)\b|DEAD END", blk.upper()))
+                bool(re.search(r"\b(DONE|NO-GO|SUBSUMED|DEPRECATED)\b|DEAD END", first))
             if section_closed or item_done:
                 out["closed"].append(item)
             else:
                 out["open"].append(item)
                 if is_takeable and out["takeable_id"] is None:
                     out["takeable_id"] = item["id"] or item["title"]
-    # De-dup by id and resolve conflicts: an id that is OPEN (e.g. the live takeable top) must not
-    # also appear in closed — block-merged prose can pull a stray 'DONE' into a live item's block.
     open_ids = {i["id"] for i in out["open"] if i["id"]}
     out["closed"] = _dedup_items(i for i in out["closed"] if not (i["id"] and i["id"] in open_ids))
     out["open"] = _dedup_items(out["open"])
@@ -239,6 +255,7 @@ def _models_table(recs: list[dict]) -> list[dict]:
             g = groups[key] = {"model": model, "quant": quant,
                                "cpu_decode": None, "gpu_decode": None,
                                "cpu_prefill": None, "gpu_prefill": None,
+                               "agentic_score": None,
                                "quality": None, "bpb": None, "math_pass": None, "code_pass": None,
                                "roofline_eff": None, "depth_drop_pct": None,
                                "statuses": [], "n": 0, "last_epoch": 0}
@@ -253,7 +270,7 @@ def _models_table(recs: list[dict]) -> list[dict]:
             g[field] = val if cur is None else max(cur, val)
         _hi("gpu_decode" if gpu else "cpu_decode", r.get("decode_tok_s"))
         _hi("gpu_prefill" if gpu else "cpu_prefill", r.get("prefill_tok_s"))
-        for f in ("quality", "bpb", "math_pass", "code_pass", "roofline_eff"):
+        for f in ("agentic_score", "quality", "bpb", "math_pass", "code_pass", "roofline_eff"):
             src = "roofline_efficiency" if f == "roofline_eff" else f
             v = r.get(src)
             if v is not None and g[f] is None:
@@ -264,7 +281,10 @@ def _models_table(recs: list[dict]) -> list[dict]:
         # bug A: label the quality number by its TRUE source. BPB is the cross-model ruler
         # (lower = better); math/code is the objective grader; the raw `quality` scalar is a
         # single-model number and is NOT Elo — never blanket-label a populated `quality` "elo".
-        if g["bpb"] is not None:
+        if g["agentic_score"] is not None:
+            g["quality_kind"] = "agentic"                    # v0.4 ranked coordinate (0..100 display)
+            g["quality_score"] = round(g["agentic_score"] * 100, 1)
+        elif g["bpb"] is not None:
             g["quality_kind"] = "bpb"
             g["quality_score"] = round(g["bpb"], 4)
         elif g["math_pass"] is not None or g["code_pass"] is not None:
@@ -422,6 +442,97 @@ def _unit_events(objs: list[dict], max_events: int = 80, max_chars: int = 700) -
                 ev.append({"kind": "result", "text": txt[:max_chars]})
     return ev[-max_events:]
 
+def _token_tele(result: dict, objs: list) -> dict:
+    """Per-unit token / context / tok-s telemetry from a stream-json result line (+ the tailed
+    events for an approximate peak context fill). Every field tolerates absence -> 0/None."""
+    u = result.get("usage") or {}
+    mu = result.get("modelUsage") or {}
+    out = u.get("output_tokens") or 0
+    dapi = result.get("duration_api_ms") or 0
+    models, ctx_window = {}, 0
+    for mid, mv in mu.items():                 # per-model split (main vs sub-agent, e.g. sonnet vs haiku)
+        models[mid] = {"input": mv.get("inputTokens") or 0, "output": mv.get("outputTokens") or 0,
+                       "cache_read": mv.get("cacheReadInputTokens") or 0,
+                       "cache_creation": mv.get("cacheCreationInputTokens") or 0,
+                       "cost": mv.get("costUSD") or 0.0, "ctx_window": mv.get("contextWindow") or 0}
+        ctx_window = max(ctx_window, mv.get("contextWindow") or 0)
+    ctx_peak = 0                               # late-run assistant turns in the tail ~= peak context fill
+    for o in objs:
+        if o.get("type") == "assistant":
+            au = (o.get("message") or {}).get("usage") or {}
+            ctx_peak = max(ctx_peak, (au.get("input_tokens") or 0) + (au.get("cache_read_input_tokens") or 0)
+                           + (au.get("cache_creation_input_tokens") or 0))
+    return {"input": u.get("input_tokens") or 0, "output": out,
+            "cache_read": u.get("cache_read_input_tokens") or 0,
+            "cache_creation": u.get("cache_creation_input_tokens") or 0,
+            "dapi": dapi, "tok_s": round(out / (dapi / 1000.0), 1) if (out and dapi) else None,
+            "ctx_peak": ctx_peak, "ctx_window": ctx_window, "models": models}
+
+
+_EST_DIV = 4  # chars-per-token heuristic (dependency-free; ~English/mixed). Approximate — surfaced as such.
+
+def _est_tokens(text: str) -> int:
+    return round(len(text) / _EST_DIV)
+
+def _ingest_costs(boxes: list) -> list:
+    """Approximate token cost to ingest the key context files (dep-free chars/4). Lets the
+    orchestrating agent see what reading each file 'costs' its context window."""
+    import glob as _glob
+    root = os.path.dirname(SCAFFOLD)
+    paths = sorted(_glob.glob(os.path.join(root, "doctrine", "*.md")))
+    paths += [os.path.join(root, "scaffold", "prompts", p) for p in ("unit.md", "consolidate.md")]
+    for box in boxes:
+        paths += [os.path.join(box, f) for f in ("MEMORY.md", "campaign.json", "STEERING.md")]
+    out = []
+    for p in paths:
+        txt = _read(p)
+        if not txt:
+            continue
+        out.append({"file": os.path.relpath(p, root).replace("\\", "/"),
+                    "bytes": len(txt.encode("utf-8")), "est_tokens": _est_tokens(txt)})
+    return out
+
+
+_UNIT_CACHE: dict = {}   # path -> ((mtime_ns, size), rec). Historical unit files are immutable, so
+                         # after the first scan only the growing in-flight file is re-parsed — turns a
+                         # ~10s all-files scan (1097 files / 266MB) into a sub-100ms poll.
+
+def _parse_unit(path: str, fn: str, m):
+    """Parse one unit jsonl into its rec dict (cost/tokens/tele/…), memoized by (mtime, size).
+    A unit with a result line is COMPLETE and immutable, so once cached it's returned WITHOUT even
+    a stat() — the key perf win on WSL/DrvFs, where 1097 per-file stat syscalls otherwise dominate."""
+    c = _UNIT_CACHE.get(path)
+    if c is not None and c[1].get("has_result"):
+        return c[1]
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (st.st_mtime_ns, st.st_size)
+    if c is not None and c[0] == key:
+        return c[1]
+    sz = st.st_size
+    rec = {"name": fn, "path": path, "kind": m.group(1), "epoch": int(m.group(2)),
+           "num": int(m.group(3)) if m.group(3) else None,
+           "empty": sz == 0, "torn": False, "has_result": False,
+           "cost": None, "is_error": None, "duration_ms": None,
+           "num_turns": None, "terminal_reason": None, "subtype": None, "tele": None}
+    if sz > 0:
+        objs = _jsonl(_tail(path, 96_000))  # the result line is at the tail
+        result = next((o for o in reversed(objs) if o.get("type") == "result"), None)
+        if result:
+            rec["has_result"] = True
+            rec.update(cost=result.get("total_cost_usd"), is_error=result.get("is_error"),
+                       duration_ms=result.get("duration_ms"), num_turns=result.get("num_turns"),
+                       terminal_reason=result.get("terminal_reason") or result.get("stop_reason"),
+                       subtype=result.get("subtype"))
+            rec["tele"] = _token_tele(result, objs)
+        elif not objs:
+            rec["torn"] = True  # non-empty but nothing parseable yet
+    _UNIT_CACHE[path] = (key, rec)
+    return rec
+
+
 def _agent(box: str, win_start) -> dict:
     """Live agent activity from the per-box driver log + per-unit `claude -p` JSON.
 
@@ -445,6 +556,9 @@ def _agent(box: str, win_start) -> dict:
         "cost_all_usd": 0.0,
         "last_unit": None,
         "recent_units": [],
+        "tokens_window": {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+        "tokens_all": {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0},
+        "tok_s_window": None, "ctx_peak_window": 0, "ctx_window": 0, "models_window": {},
     }
 
     # ---- driver log: isolate the current window (everything after the last START) ----
@@ -494,28 +608,9 @@ def _agent(box: str, win_start) -> dict:
         m = _UNIT_RE.match(fn)
         if not m:
             continue
-        p = os.path.join(rundir, fn)
-        try:
-            sz = os.path.getsize(p)
-        except OSError:
-            continue
-        rec = {"name": fn, "path": p, "kind": m.group(1), "epoch": int(m.group(2)),
-               "num": int(m.group(3)) if m.group(3) else None,
-               "empty": sz == 0, "torn": False, "has_result": False,
-               "cost": None, "is_error": None, "duration_ms": None,
-               "num_turns": None, "terminal_reason": None, "subtype": None}
-        if sz > 0:
-            objs = _jsonl(_tail(p, 96_000))  # the result line is at the tail
-            result = next((o for o in reversed(objs) if o.get("type") == "result"), None)
-            if result:
-                rec["has_result"] = True
-                rec.update(cost=result.get("total_cost_usd"), is_error=result.get("is_error"),
-                           duration_ms=result.get("duration_ms"), num_turns=result.get("num_turns"),
-                           terminal_reason=result.get("terminal_reason") or result.get("stop_reason"),
-                           subtype=result.get("subtype"))
-            elif not objs:
-                rec["torn"] = True  # non-empty but nothing parseable yet
-        recs.append(rec)
+        rec = _parse_unit(os.path.join(rundir, fn), fn, m)
+        if rec is not None:
+            recs.append(rec)
     recs.sort(key=lambda r: (r["epoch"], r["num"] or 0))
 
     win_start = win_start or 0
@@ -524,6 +619,30 @@ def _agent(box: str, win_start) -> dict:
             info["cost_all_usd"] += r["cost"]
             if r["epoch"] >= win_start:
                 info["cost_window_usd"] += r["cost"]
+    # token / context telemetry aggregation (v0.4): sum tokens window+all, tok/s window, per-model split
+    dapi_win = 0.0
+    for r in recs:
+        t = r.get("tele")
+        if not t:
+            continue
+        in_win = r["epoch"] >= win_start
+        for k in ("input", "output", "cache_read", "cache_creation"):
+            info["tokens_all"][k] += t[k]
+            if in_win:
+                info["tokens_window"][k] += t[k]
+        if in_win:
+            dapi_win += t["dapi"]
+            info["ctx_peak_window"] = max(info["ctx_peak_window"], t["ctx_peak"])
+            info["ctx_window"] = max(info["ctx_window"], t["ctx_window"])
+            for mid, mv in t["models"].items():
+                agg = info["models_window"].setdefault(
+                    mid, {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "cost": 0.0})
+                for k in ("input", "output", "cache_read", "cache_creation", "cost"):
+                    agg[k] += mv[k]
+    ow = info["tokens_window"]["output"]
+    info["tok_s_window"] = round(ow / (dapi_win / 1000.0), 1) if (ow and dapi_win) else None
+    for mv in info["models_window"].values():
+        mv["cost"] = round(mv["cost"], 4)
     window_units = [r for r in recs if r["epoch"] >= win_start]
     info["units_launched"] = max(info["current_unit"] or 0, len(window_units))
     info["units_completed"] = sum(1 for r in window_units if r["has_result"])
@@ -532,12 +651,14 @@ def _agent(box: str, win_start) -> dict:
     info["running"] = (terminal is None) and in_flight
     done = [r for r in recs if r["has_result"]]
     if done:
-        info["last_unit"] = {k: done[-1][k] for k in
+        info["last_unit"] = {**{k: done[-1][k] for k in
                              ("name", "kind", "num", "epoch", "cost", "is_error",
-                              "duration_ms", "num_turns", "terminal_reason", "subtype")}
+                              "duration_ms", "num_turns", "terminal_reason", "subtype")},
+                             "tele": done[-1].get("tele")}
     info["recent_units"] = [
-        {k: r[k] for k in ("kind", "num", "epoch", "cost", "is_error",
-                           "duration_ms", "num_turns", "empty", "torn", "has_result")}
+        {**{k: r[k] for k in ("kind", "num", "epoch", "cost", "is_error",
+                              "duration_ms", "num_turns", "empty", "torn", "has_result")},
+         "tele": r.get("tele")}
         for r in recs[-8:]]
 
     # ---- live transcript: the newest unit's stream (in-flight if running, else last done) ----
@@ -686,6 +807,8 @@ def build_box(box: str, now: float) -> dict:
         "queue": _queue(md),
         "steering": _steering(box),
         "hardware": _hardware(box),
+        "hardware_live": _read_json(os.path.join(box, "work", "hw_status.json"), None),  # last on-demand probe
+        "paused": os.path.exists(os.path.join(box, "work", "PAUSE")),
         "remaining_s": remaining,
         "counts": dict(tally),
         "n_records": len(recs),
@@ -695,6 +818,7 @@ def build_box(box: str, now: float) -> dict:
             "prefill_tok_s": r.get("prefill_tok_s"),
             "ttft_s": r.get("ttft_s"),
             "quality": r.get("quality"),
+            "agentic_score": r.get("agentic_score"),
             "perf_per_watt": r.get("perf_per_watt"),
             "roofline_efficiency": r.get("roofline_efficiency"),
             "roofline_ceiling_tok_s": r.get("roofline_ceiling_tok_s"),
@@ -710,6 +834,7 @@ def build_box(box: str, now: float) -> dict:
             "decode": axis_best("decode_tok_s"),
             "prefill": axis_best("prefill_tok_s"),
             "quality": axis_best("quality"),
+            "agentic": axis_best("agentic_score"),
         },
         "roofline_now": None if not top else {
             "efficiency": top.get("roofline_efficiency"),
@@ -736,7 +861,7 @@ def build_data() -> dict:
         except Exception as e:  # one bad box must not blank the whole fleet
             boxes.append({"nick": os.path.basename(b.rstrip("/")),
                           "box_dir": os.path.basename(b.rstrip("/")), "error": str(e)})
-    return {"now": now, "boxes": boxes}
+    return {"now": now, "boxes": boxes, "ingest": _ingest_costs(BOXES)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -756,6 +881,100 @@ def discover_boxes(path: str) -> list[str]:
     except OSError:
         pass
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# write-API (0.4): the Control page POSTs /action/<name> here; each shells to a vetted CLI. The server
+# binds 127.0.0.1 (localhost-only); the box is validated against the served set; every arg is passed as
+# an argv LIST (never a shell string), so there is no command injection.
+# ─────────────────────────────────────────────────────────────────────────────
+def _canon_box(box):
+    want = str(box or "").rstrip("/")
+    for b in BOXES:
+        if b.rstrip("/") == want or os.path.basename(b.rstrip("/")) == want:
+            return b
+    return None
+
+def _run(argv, timeout=30):
+    p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    return {"rc": p.returncode, "out": (p.stdout or "").strip(), "err": (p.stderr or "").strip()}
+
+def _do_action(action, params):
+    box = _canon_box(params.get("box"))
+    if not box:
+        return {"ok": False, "error": f"unknown box: {params.get('box')!r}"}
+    PY = ["python3"]
+    try:
+        if action == "steer":
+            text = (params.get("text") or "").strip()
+            if not text:
+                return {"ok": False, "error": "empty steering note"}
+            argv = PY + ["scaffold/steer.py", box, text]
+            if params.get("tag"):
+                argv += ["--tag", str(params["tag"])]
+            if params.get("research"):
+                argv += ["--research"]
+            r = _run(argv); return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action == "steer-delete":
+            r = _run(PY + ["scaffold/steer.py", box, "--delete", str(int(params.get("n") or 0))])
+            return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action == "queue-inject":
+            text = (params.get("text") or "").strip()
+            if not text:
+                return {"ok": False, "error": "empty queue item"}
+            argv = PY + ["scaffold/queue.py", box, text]
+            if params.get("tag"):
+                argv += ["--tag", str(params["tag"])]
+            r = _run(argv); return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action == "window-add":
+            argv = PY + ["scaffold/window.py", box, "add-hours", str(float(params.get("hours")))]
+            if params.get("force"):
+                argv += ["--force"]
+            r = _run(argv); return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action in ("pause", "resume", "hard-kill"):
+            r = _run(PY + ["scaffold/window.py", box, action])
+            return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action == "stop":                        # clean = graceful (finish unit); force = default (kill unit)
+            argv = PY + ["scaffold/window.py", box, "stop"] + (["--graceful"] if params.get("graceful") else [])
+            r = _run(argv); return {"ok": r["rc"] == 0, "message": r["out"] or r["err"]}
+        if action == "run-start":
+            camp = _read_json(os.path.join(box, "campaign.json"), {}) or {}
+            if camp.get("state") == "running":
+                return {"ok": False, "error": "a run is already active — stop it first"}
+            hours = params.get("hours")
+            argv = ["bash", "scaffold/run_window.sh", box] + ([str(int(hours))] if hours else [])
+            logp = os.path.join(box, "work", "run_window.nohup.log")
+            os.makedirs(os.path.dirname(logp), exist_ok=True)
+            subprocess.Popen(argv, stdout=open(logp, "a"), stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL, start_new_session=True)
+            return {"ok": True, "message": f"run started ({hours}h) — detached" if hours else "run continuing current window"}
+        if action == "hw-refresh":
+            subprocess.run(PY + ["scaffold/boxpaths.py", box, "--wake"], capture_output=True, timeout=20)  # best-effort wake
+            try:
+                ssh = subprocess.check_output(PY + ["scaffold/boxpaths.py", box, "--ssh"], text=True, timeout=15).split()
+            except Exception as e:
+                return {"ok": False, "error": f"resolver: {e}"}
+            try:
+                with open(os.path.join(SCAFFOLD, "hw_probe.sh")) as f:
+                    r = subprocess.run(ssh + ["bash -s"], stdin=f, capture_output=True, text=True, timeout=35)
+            except subprocess.TimeoutExpired:
+                return {"ok": False, "error": "probe timed out — box unreachable/asleep"}
+            if r.returncode != 0 or not r.stdout.strip():
+                return {"ok": False, "error": (r.stderr or "probe failed")[:200]}
+            try:
+                hw = json.loads(r.stdout)
+            except Exception:
+                return {"ok": False, "error": "probe returned non-JSON"}
+            try:
+                json.dump(hw, open(os.path.join(box, "work", "hw_status.json"), "w"))
+            except OSError:
+                pass
+            return {"ok": True, "hw": hw}
+        return {"ok": False, "error": f"unknown action: {action}"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": "action timed out"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -822,6 +1041,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, "not found", "text/plain")
         self._send_file(data, ctype, os.path.basename(target))
 
+    def do_POST(self):
+        if self.path.split("?")[0].startswith("/action/"):
+            action = self.path.split("?")[0][len("/action/"):]
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                params = json.loads(self.rfile.read(n) if n else b"{}")
+            except Exception:
+                params = {}
+            res = _do_action(action, params if isinstance(params, dict) else {})
+            self._send(200 if res.get("ok") else 400, json.dumps(res), "application/json")
+        else:
+            self._send(404, "not found", "text/plain")
+
     def do_GET(self):
         if self.path.startswith("/data"):
             try:
@@ -833,10 +1065,52 @@ class Handler(BaseHTTPRequestHandler):
                 self._serve_report()
             except Exception as e:
                 self._send(500, "report error: " + str(e), "text/plain")
-        elif self.path in ("/", "/index.html"):
+        elif self.path.split("?")[0] in ("/", "/index.html", "/next"):   # the System-3 client (/next kept as an alias)
             self._send(200, _read(os.path.join(HERE, "index.html")), "text/html; charset=utf-8")
+        elif self.path.split("?")[0].startswith("/fonts/"):     # static fonts (e.g. the System 3.0 Chicago face)
+            self._serve_font()
+        elif self.path.split("?")[0].startswith("/vendor/"):    # vendored libs (system.css, interact.js, …)
+            self._serve_vendor()
         else:
             self._send(404, "not found", "text/plain")
+
+    def _serve_font(self):
+        name = os.path.basename(self.path.split("?")[0])
+        path = os.path.join(HERE, "fonts", name)
+        if not os.path.isfile(path):
+            self._send(404, "no font", "text/plain")
+            return
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        mime = {"woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf", "otf": "font/otf"}.get(ext, "application/octet-stream")
+        with open(path, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        self.wfile.write(data)
+
+    _VENDOR_MIME = {"css": "text/css", "js": "application/javascript", "svg": "image/svg+xml",
+                    "png": "image/png", "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf",
+                    "json": "application/json", "map": "application/json"}
+
+    def _serve_vendor(self):
+        rel = self.path.split("?")[0][len("/vendor/"):]
+        base = os.path.normpath(os.path.join(HERE, "vendor"))
+        path = os.path.normpath(os.path.join(base, rel))
+        if not (path == base or path.startswith(base + os.sep)) or not os.path.isfile(path):  # no path-traversal escape
+            self._send(404, "not found", "text/plain")
+            return
+        ext = path.rsplit(".", 1)[-1].lower() if "." in os.path.basename(path) else ""
+        with open(path, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", self._VENDOR_MIME.get(ext, "application/octet-stream"))
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        self.wfile.write(data)
 
 
 def main() -> int:

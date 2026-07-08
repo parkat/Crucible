@@ -4,9 +4,12 @@
 > from THIS FILE alone (plus the ledger and the clock). Keep every section current.
 > See doctrine/06 for the contract.
 >
-> **This file is the working HEAD** — keep it small; units read it in full every unit. At
-> consolidate, roll findings/snapshots older than the ~3 most recent into `MEMORY_ARCHIVE.md`
-> (units `grep` it on demand). A bounded head is the single biggest per-unit token saving.
+> **This file is the working HEAD** — keep it small; units read it in full every unit. A bounded
+> head is the single biggest per-unit token saving. **Budget: ≤ ~12k tokens; each tried/findings
+> entry ≤ 2 lines** (cite the ledger id — the full detail lives in the ledger + archive, don't
+> restate it). At consolidate, roll findings/snapshots older than the ~3 most recent into
+> `MEMORY_ARCHIVE.md` (units `grep` it on demand). If the head must shrink below ~9k, move the
+> Known-good-flags block + landscape snapshot to a grep-on-demand reference file (they dominate).
 
 ## Deadline
 - Label: <1hr|6hr|1day|3day|open>

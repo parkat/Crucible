@@ -111,6 +111,31 @@ def list_inbox(path: str) -> list[str]:
     return out
 
 
+def delete_note(path: str, n: int) -> str | None:
+    """Retract the Nth Inbox note (1-based, matching --list order). Returns the removed text or None."""
+    lines = _read(path).splitlines()
+    hdr = next((i for i, l in enumerate(lines) if INBOX_RE.match(l.strip())), None)
+    if hdr is None:
+        return None
+    starts = []
+    for i in range(hdr + 1, len(lines)):
+        if ANY_H2_RE.match(lines[i]):
+            break
+        if re.match(r"^[-*]\s+", lines[i].strip()):
+            starts.append(i)
+    if n < 1 or n > len(starts):
+        return None
+    s = starts[n - 1]
+    e = s + 1
+    while e < len(lines) and not re.match(r"^[-*]\s+", lines[e].strip()) and not ANY_H2_RE.match(lines[e]):
+        e += 1
+    removed = "\n".join(lines[s:e]).strip()
+    del lines[s:e]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines).rstrip() + "\n")
+    return removed
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="add an operator steering note to a box's STEERING.md inbox")
     ap.add_argument("box", help="box folder, e.g. boxes/<nick>")
@@ -121,6 +146,7 @@ def main() -> int:
                     help="mark it as a web-research probe (worker spends a research phase on it)")
     ap.add_argument("--note", help="optional extra context line")
     ap.add_argument("--list", action="store_true", help="print the pending inbox and exit")
+    ap.add_argument("--delete", type=int, metavar="N", help="retract pending inbox note N (see --list ordering)")
     a = ap.parse_args()
 
     box = a.box.rstrip("/")
@@ -128,6 +154,14 @@ def main() -> int:
         print(f"steer: not a box (no campaign.json): {box}", file=sys.stderr)
         return 2
     path = os.path.join(box, "STEERING.md")
+
+    if a.delete:
+        removed = delete_note(path, a.delete)
+        if removed is None:
+            print(f"steer: no inbox note {a.delete} to retract", file=sys.stderr)
+            return 2
+        print(f"steer: retracted inbox note {a.delete}:\n  {removed[:140]}")
+        return 0
 
     if a.list:
         items = list_inbox(path)
