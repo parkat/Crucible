@@ -106,8 +106,11 @@ future plugins on the same registry.
 
 ## Proposal E (v0.4) — agentic graders are format-fragile + token-truncated; harden before the composite is trusted for ranking  (2026-07-08)
 
-**Status: PROPOSED — awaiting human gate.** Surfaced by the operator on the 2026-07-07 18hr live
-window (the first on-box exercise of the agentic kernel from Proposal-v0.4 above). The plumbing works;
+**Status: ✅ APPROVED — human gate passed 2026-07-08, operator parker@pureturbos.com. Implemented on
+`release/0.4` (graders + budget in this pass; asset growth follows). Confirm-before-merge: the on-box
+re-eval of the four blessed configs (3B gsm8k should jump).** Surfaced by the operator on the
+2026-07-07 18hr live window (the first on-box exercise of the agentic kernel from Proposal-v0.4 above).
+The plumbing works;
 the **numbers do not yet measure capability**, so the composite must NOT re-rank the blessed front
 until this lands. `bpb`/objective stay the trustworthy rulers in the meantime.
 

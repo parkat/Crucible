@@ -69,21 +69,50 @@ def nats_to_bits(sum_neg_ln_prob: float) -> float:
 
 # ====================== TIER 1: auto-graded math =============================
 _NUM = re.compile(r"-?\d+(?:\.\d+)?")
+_NUM_ANY = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+# Explicit final-answer markers, preferred over "last number" — a verbose or truncated CoT ends on an
+# intermediate number, so the last-number heuristic scored the scratch work (Proposal-E: gsm8k inversion).
+_ANS_MARKERS = (
+    r"####\s*(-?\d[\d,]*(?:\.\d+)?)",                                                # GSM8K canonical
+    r"\\boxed\{\s*(-?\d[\d,]*(?:\.\d+)?)\s*\}",                                      # \boxed{N}
+    r"(?:final answer|the answer is|answer\s*[:=])\s*\$?\s*(-?\d[\d,]*(?:\.\d+)?)",  # phrase
+)
+
+def _strip_think(text: str) -> str:
+    """Drop a <think>...</think> reasoning span (or a dangling, unclosed <think>… preamble) so the
+    graders read the ANSWER, not the scratch work. Generic to any reasoning-tagged model (R1-distill…)."""
+    if not text:
+        return text or ""
+    t = re.sub(r"<think>.*?</think>", " ", text, flags=re.S | re.I)   # closed reasoning spans
+    t = re.sub(r"<think>.*$", " ", t, flags=re.S | re.I)             # truncated/unclosed preamble
+    return t
+
+def _extract_answer_number(text: str):
+    """The model's FINAL numeric answer: prefer an explicit marker (####, \\boxed, 'the answer is'),
+    else the last number — after stripping <think> so intermediate scratch numbers can't win. Returns a
+    comma-normalized numeric string, or None."""
+    t = _strip_think(text or "")
+    for pat in _ANS_MARKERS:
+        ms = list(re.finditer(pat, t, re.I))
+        if ms:
+            return ms[-1].group(1).replace(",", "")
+    nums = _NUM_ANY.findall(t)
+    return nums[-1].replace(",", "") if nums else None
 
 def grade_math(outputs: list[str], items: list[dict]) -> float:
     """
-    items: [{"id","prompt","answer"}]; exact numeric match on the LAST number emitted
-    (models usually conclude with the answer). Returns pass fraction.
+    items: [{"id","prompt","answer"}]. Extracts the model's FINAL answer (marker-preferred, <think>
+    stripped) and exact-numeric-matches it. Returns pass fraction. (Proposal-E hardening: the old
+    "last number emitted" grader scored a verbose/truncated CoT on an intermediate number.)
     """
     if not items:
         return 0.0
     ok = 0
     for out, it in zip(outputs, items):
-        nums = _NUM.findall(out or "")
-        if not nums:
+        got = _extract_answer_number(out or "")
+        if got is None:
             continue
-        got = nums[-1]
-        want = str(it["answer"]).strip()
+        want = str(it["answer"]).strip().replace(",", "")
         try:
             if abs(float(got) - float(want)) < 1e-6:
                 ok += 1
@@ -121,14 +150,20 @@ def grade_code(outputs: list[str], items: list[dict], timeout: int = 10) -> floa
     return ok / len(items)
 
 def _extract_code(text: str) -> str:
-    m = re.search(r"```(?:python)?\s*(.*?)```", text, re.DOTALL)
-    return m.group(1) if m else text
+    t = _strip_think(text or "")                                    # ignore reasoning scratch
+    m = re.search(r"```(?:python)?\s*(.*?)```", t, re.DOTALL)
+    if m:
+        return m.group(1)
+    m2 = re.search(r"(?m)^(?:from |import |def |class |@)", t)      # unfenced fallback: from the first code line
+    return t[m2.start():] if m2 else t
 
 
 # ====================== shared: robust JSON extraction =======================
 def _first_json(text: str):
     """First parseable JSON object/array in text (a ```json fence or a balanced {...} span).
-    Returns the parsed value or None. Used by the tool-call + ifeval-json graders."""
+    Returns the parsed value or None. Used by the tool-call + ifeval-json graders.
+    (Proposal-E: <think> scratch is stripped first so its braces don't shadow the real tool call.)"""
+    text = _strip_think(text or "")
     if not text:
         return None
     cands = []
@@ -348,6 +383,11 @@ if __name__ == "__main__":
     assert is_degenerate("the the the the the the the the the")[0] is True
     assert is_degenerate("A clear, varied sentence about inference on old hardware.")[0] is False
     assert grade_math(["the answer is 42"], [{"id": "1", "prompt": "", "answer": 42}]) == 1.0
+    # Proposal-E: <think> stripped, explicit marker preferred over a trailing/intermediate number
+    assert grade_math(["<think>try 7... no 13</think> #### 42"], [{"id": "2", "prompt": "", "answer": 42}]) == 1.0
+    assert grade_math(["#### 42\n(see also problem 99)"], [{"id": "3", "prompt": "", "answer": 42}]) == 1.0
+    assert _extract_answer_number("<think>1000</think> the answer is 1,024") == "1024"
+    assert _extract_toolcall('<think>maybe {"name":"wrong"}</think> {"name":"get_weather","arguments":{"city":"Paris"}}')["name"] == "get_weather"
     assert grade_code(
         ["```python\ndef add(a,b):\n  return a+b\n```"],
         [{"id": "1", "prompt": "", "tests": "assert add(2,3)==5"}]) == 1.0

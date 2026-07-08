@@ -18,7 +18,7 @@ CHAT-TEMPLATE ROUTING (doctrine: harness fix, not a one-model patch):
 Usage:
   python3 eval_config.py <llama-completion-bin> <model.gguf> <assets_dir> <runner_dir> [threads]
 """
-import json, os, shutil, subprocess, sys, time
+import json, os, re, shutil, subprocess, sys, time
 sys.path.insert(0, sys.argv[4])  # runner_dir
 import runner
 
@@ -116,7 +116,7 @@ THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
 REASONING_RETRY_MULT = 4
 
 
-def gen(prompt, n=160, temp=0.0, retries=2):
+def gen(prompt, n=160, temp=0.0, retries=2, answer_probe=None):
     cmd = _build_cmd(prompt, n, temp)
     # Generation is greedy+seeded (deterministic), so an empty result is NOT the model's
     # real output — it's a transient process/GPU-reload hiccup (the harness reloads the full
@@ -126,12 +126,14 @@ def gen(prompt, n=160, temp=0.0, retries=2):
         out = _run_once(cmd)
         if out.strip():
             break
-    if THINK_OPEN in out and THINK_CLOSE not in out:
-        # truncated mid-think: same prompt, a much larger budget, one shot only (not worth
-        # unbounded retries — if it still doesn't close, that's the real (long) answer).
-        big_cmd = _build_cmd(prompt, n * REASONING_RETRY_MULT, temp)
-        bigger = _run_once(big_cmd)
-        if bigger.strip():
+    # Proposal-E: escalate the token budget when the ANSWER is missing. The old check only caught an
+    # unclosed <think>; but plain verbose CoT (no tags) truncates the same way, so we also fire on a
+    # battery-specific probe that finds no extractable answer. One shot at a much larger budget.
+    need_more = (THINK_OPEN in out and THINK_CLOSE not in out) or \
+                (answer_probe is not None and not answer_probe(out))
+    if need_more:
+        bigger = _run_once(_build_cmd(prompt, n * REASONING_RETRY_MULT, temp))
+        if bigger.strip() and (answer_probe is None or answer_probe(bigger) or len(bigger) > len(out)):
             out = bigger
     return out
 
@@ -158,6 +160,13 @@ def _toolcall_prompt(it):
             "\n\nRespond with ONE JSON tool call and nothing else, exactly like: "
             '{"name": "<tool_name>", "arguments": {<args>}}')
 
+def _math_prompt(it):
+    """Proposal-E: standardize the answer format so extraction is reliable across terse AND verbose
+    models — ask for reasoning THEN a marked final line. grade_math prefers the '#### N' marker, and
+    the marker's absence is what tells the harness a long CoT truncated before its answer."""
+    return (it["prompt"] +
+            "\n\nShow your reasoning, then end with the final answer on its own line exactly as:\n#### <number>")
+
 math_items = load_jsonl(os.path.join(ASSETS, "math.jsonl"))
 code_items = load_jsonl(os.path.join(ASSETS, "code.jsonl"))
 # agentic benchmarks (v0.4) — optional so an older staged asset dir still runs
@@ -166,11 +175,18 @@ gsm8k_items  = load_jsonl_opt(os.path.join(ASSETS, "gsm8k.jsonl"))
 tool_items   = load_jsonl_opt(os.path.join(ASSETS, "toolcall.jsonl"))
 
 t0 = time.time()
-math_out   = [gen(it["prompt"], n=120) for it in math_items]
-code_out   = [gen(it["prompt"], n=320) for it in code_items]
-ifeval_out = [gen(it["prompt"], n=256) for it in ifeval_items]
-gsm8k_out  = [gen(it["prompt"], n=256) for it in gsm8k_items]
-tool_out   = [gen(_toolcall_prompt(it), n=160) for it in tool_items]
+# Proposal-E: bigger budgets on the reasoning-heavy batteries + a per-battery answer probe that
+# escalates when the final answer didn't fit. For math/gsm8k the probe is the ANSWER MARKER (not "any
+# number") — a truncated CoT still contains intermediate numbers, so only the marker's absence reliably
+# signals "truncated before the answer." This is the real fix for the verbose-CoT gsm8k inversion.
+_MARK     = lambda o: any(re.search(p, runner._strip_think(o or ""), re.I) for p in runner._ANS_MARKERS)
+_has_code = lambda o: "```" in (o or "") or bool(re.search(r"\bdef\s+\w+\s*\(", runner._strip_think(o or "")))
+_has_call = lambda o: runner._extract_toolcall(o or "") is not None
+math_out   = [gen(_math_prompt(it), n=256, answer_probe=_MARK)  for it in math_items]
+code_out   = [gen(it["prompt"], n=512, answer_probe=_has_code)  for it in code_items]
+ifeval_out = [gen(it["prompt"], n=320)                           for it in ifeval_items]
+gsm8k_out  = [gen(_math_prompt(it), n=512, answer_probe=_MARK)  for it in gsm8k_items]
+tool_out   = [gen(_toolcall_prompt(it), n=220, answer_probe=_has_call) for it in tool_items]
 
 # Tier-0 degeneracy across ALL generated samples
 degens = []
