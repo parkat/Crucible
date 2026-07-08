@@ -12,7 +12,7 @@
   ::selection{ background:var(--ink); color:var(--paper); }
   *{ box-sizing:border-box; }
   html,body{ height:100%; margin:0; overflow:hidden; -webkit-font-smoothing:none; }
-  body{ font-family:"Geneva_9","Chicago",system-ui,sans-serif; color:var(--ink);
+  body{ font-family:"Geneva_9","Chicago",system-ui,sans-serif; color:var(--ink); font-size:13px;
     background:var(--paper); }
   /* desktop = the 50% dither classic pattern; the Control Panel pattern editor will replace it later */
   #desktop{ position:fixed; inset:var(--menubar-h) 0 0 0;
@@ -29,7 +29,7 @@
   #menubar .apple{ padding:0 11px; justify-content:center; }
   #menubar .apple img{ width:14px; height:16px; display:block; }
   #menubar .mi.open > img, #menubar .apple:hover > img{ filter:invert(1); }   /* invert ONLY the apple logo, not dropdown icons */
-  #menubar .clock{ margin-left:auto; padding:0 10px; font-family:"Monaco",monospace; font-size:12px; }
+  #menubar .clock{ margin-left:auto; padding:0 10px; font-family:"Monaco",monospace; font-size:13px; }
   .dropdown{ position:absolute; top:var(--menubar-h); left:0; min-width:210px; background:var(--paper);
     color:var(--ink); border:1px solid var(--ink); box-shadow:2px 2px 0 var(--ink); z-index:9001; padding:2px 0; display:none; }
   .dropdown.open{ display:block; }
@@ -43,27 +43,27 @@
   /* ── windows (system.css .window, positioned + interactive) ── */
   #desktop .window{ position:absolute; display:flex; flex-direction:column; min-width:200px; min-height:110px; }
   #desktop .window .window-pane{ flex:1 1 auto; overflow:auto; margin:0; min-height:0; font-family:"Geneva_9",system-ui,sans-serif; }
-  .dk-label{ font-family:"Chicago",sans-serif; font-size:11px; margin:9px 0 3px; }
+  .dk-label{ font-family:"Chicago",sans-serif; font-size:13px; margin:9px 0 3px; }
   .dk-label:first-child{ margin-top:0; }
   /* ── cockpit: buttons, feed, toasts, confirm ── */
   .btnrow{ display:flex; gap:7px; flex-wrap:wrap; align-items:center; margin-top:8px; }
-  .feed{ font-family:"Monaco",monospace; font-size:11px; line-height:1.55; }
+  .feed{ font-family:"Monaco",monospace; font-size:13px; line-height:1.55; }
   .feed-row{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .std-input{ font-family:"Monaco",monospace; border:1px solid var(--ink); background:var(--paper); padding:1px 4px; }
   #toasts{ position:fixed; right:14px; bottom:14px; z-index:9998; display:flex; flex-direction:column; gap:6px; }
   .toast{ background:var(--paper); border:1px solid var(--ink); box-shadow:2px 2px 0 var(--ink); padding:6px 12px;
-    font-size:12px; max-width:340px; font-family:"Geneva_9",sans-serif; transition:opacity .3s; }
+    font-size:13px; max-width:340px; font-family:"Geneva_9",sans-serif; transition:opacity .3s; }
   .toast.err{ font-weight:bold; }
   .cfm-scrim{ position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,.35); display:none; align-items:center; justify-content:center; }
   .cfm-scrim.open{ display:flex; }
   #confirm .window{ position:static; width:330px; }
   .cfm-t{ font-family:"Chicago",sans-serif; font-size:13px; margin-bottom:6px; }
-  .cfm-m{ font-size:12px; line-height:1.4; }
+  .cfm-m{ font-size:13px; line-height:1.4; }
   .chips{ display:inline-flex; gap:4px; }
-  .chip{ font-family:"Monaco",monospace; font-size:10px; border:1px solid var(--ink); padding:1px 6px; cursor:default; }
+  .chip{ font-family:"Monaco",monospace; font-size:12px; border:1px solid var(--ink); padding:1px 6px; cursor:default; }
   .chip.on{ background:var(--ink); color:var(--paper); }
   .del{ cursor:pointer; margin-left:6px; }
-  .mtbl{ width:100%; border-collapse:collapse; font-family:"Monaco",monospace; font-size:11px; }
+  .mtbl{ width:100%; border-collapse:collapse; font-family:"Monaco",monospace; font-size:13px; }
   .mtbl th{ text-align:left; border-bottom:2px solid var(--ink); padding:2px 5px; font-family:"Chicago",sans-serif; position:sticky; top:0; background:var(--paper); }
   .mtbl td{ padding:1px 5px; border-bottom:1px dotted #999; white-space:nowrap; }
   .mtbl .r{ text-align:right; }
@@ -72,9 +72,9 @@
   body[data-theme="amber"]{ filter:invert(1) sepia(1) saturate(2.6) hue-rotate(-22deg) brightness(1.06); }
   body[data-theme="green"]{ filter:invert(1) sepia(1) saturate(3.4) hue-rotate(62deg) brightness(0.98); }
   /* ── Control Panel ── */
-  .s3cp{ display:grid; grid-template-columns:1fr 1fr; gap:13px 10px; font-size:11px; padding:4px 2px 2px; }
+  .s3cp{ display:grid; grid-template-columns:1fr 1fr; gap:13px 10px; font-size:13px; padding:4px 2px 2px; }
   .s3cp .box{ border:1px solid var(--ink); padding:9px 10px 8px; position:relative; }
-  .s3cp .box>.bt{ font-family:"Chicago",sans-serif; font-size:10px; position:absolute; top:-7px; left:8px; background:var(--paper); padding:0 4px; }
+  .s3cp .box>.bt{ font-family:"Chicago",sans-serif; font-size:12px; position:absolute; top:-7px; left:8px; background:var(--paper); padding:0 4px; }
   .s3cp .span2{ grid-column:1/-1; }
   .s3cp .row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:4px 0; }
   .s3radio{ display:inline-flex; align-items:center; gap:5px; cursor:default; }
@@ -90,21 +90,21 @@
   /* ── desktop icons ── */
   .dicon{ position:absolute; width:76px; text-align:center; cursor:default; user-select:none; z-index:5; }
   .dicon img{ width:32px; height:32px; display:block; margin:0 auto 2px; image-rendering:pixelated; }
-  .dicon .lbl{ font-family:"Geneva_9",sans-serif; font-size:11px; background:var(--paper); padding:0 3px; display:inline-block; }
+  .dicon .lbl{ font-family:"Geneva_9",sans-serif; font-size:13px; background:var(--paper); padding:0 3px; display:inline-block; }
   .dicon.sel .lbl{ background:var(--ink); color:var(--paper); }
   /* ── Finder list (reports) ── */
-  .frow{ display:flex; align-items:center; gap:8px; font-size:12px; padding:3px 4px; cursor:default; border-bottom:1px dotted #aaa; }
-  .frow img{ width:16px; height:16px; } .frow .sz{ margin-left:auto; font-family:"Monaco",monospace; font-size:10px; color:#555; }
-  .frow .lt{ font-family:"Monaco",monospace; font-size:8px; border:1px solid var(--ink); padding:0 3px; }
+  .frow{ display:flex; align-items:center; gap:8px; font-size:13px; padding:3px 4px; cursor:default; border-bottom:1px dotted #aaa; }
+  .frow img{ width:16px; height:16px; } .frow .sz{ margin-left:auto; font-family:"Monaco",monospace; font-size:12px; color:#555; }
+  .frow .lt{ font-family:"Monaco",monospace; font-size:11px; border:1px solid var(--ink); padding:0 3px; }
   /* ── rendered doc (reports, read me) ── */
-  .s3doc{ font-family:"Geneva_9",sans-serif; font-size:12px; line-height:1.5; }
+  .s3doc{ font-family:"Geneva_9",sans-serif; font-size:13px; line-height:1.5; }
   .s3doc h1{ font-family:"Chicago",sans-serif; font-size:17px; border-bottom:2px solid var(--ink); padding-bottom:4px; margin:2px 0 10px; }
   .s3doc h2{ font-family:"Chicago",sans-serif; font-size:14px; margin:14px 0 5px; }
-  .s3doc h3{ font-family:"Chicago",sans-serif; font-size:12px; margin:11px 0 4px; }
-  .s3doc p{ margin:6px 0; } .s3doc ul{ margin:5px 0; padding-left:18px; } .s3doc code{ font-family:"Monaco",monospace; font-size:11px; }
-  .s3doc pre{ font-family:"Monaco",monospace; font-size:10px; border:1px solid var(--ink); padding:7px; overflow:auto; white-space:pre; }
-  .s3fc{ display:flex; flex-direction:column; margin:10px 0; font-size:11px; }
-  .s3fc .stg{ border:1px solid var(--ink); padding:7px 9px; } .s3fc .sh{ font-family:"Chicago",sans-serif; font-size:11px; margin-bottom:4px; }
+  .s3doc h3{ font-family:"Chicago",sans-serif; font-size:13px; margin:11px 0 4px; }
+  .s3doc p{ margin:6px 0; } .s3doc ul{ margin:5px 0; padding-left:18px; } .s3doc code{ font-family:"Monaco",monospace; font-size:13px; }
+  .s3doc pre{ font-family:"Monaco",monospace; font-size:12px; border:1px solid var(--ink); padding:7px; overflow:auto; white-space:pre; }
+  .s3fc{ display:flex; flex-direction:column; margin:10px 0; font-size:13px; }
+  .s3fc .stg{ border:1px solid var(--ink); padding:7px 9px; } .s3fc .sh{ font-family:"Chicago",sans-serif; font-size:13px; margin-bottom:4px; }
   .s3fc .stp{ display:flex; flex-wrap:wrap; gap:4px; } .s3fc .st{ border:1px solid var(--ink); padding:2px 6px; } .s3fc .st.inv{ background:var(--ink); color:var(--paper); }
   .s3fc .ar{ align-self:center; font-family:"Chicago",sans-serif; font-size:14px; padding:2px 0; }
   .win-resize{ position:absolute; right:0; bottom:0; width:16px; height:16px; cursor:nwse-resize;
@@ -112,14 +112,14 @@
   .win-resize::after{ content:""; position:absolute; inset:3px 3px 4px 4px;
     background:repeating-linear-gradient(135deg, #000 0 1px, #fff 1px 3px); }
   .title-bar{ cursor:grab; }
-  .kv{ display:flex; justify-content:space-between; gap:12px; padding:2px 0; font-size:12px; }
+  .kv{ display:flex; justify-content:space-between; gap:12px; padding:2px 0; font-size:13px; }
   .kv .k{ color:#555; } .kv .v{ font-family:"Monaco",monospace; }
-  .muted{ color:#777; font-size:11px; }
+  .muted{ color:#777; font-size:13px; }
 
   /* ── desktop icons ── */
   .dicon{ position:absolute; width:74px; text-align:center; cursor:default; user-select:none; z-index:5; }
   .dicon img{ width:32px; height:32px; display:block; margin:0 auto 2px; }
-  .dicon .lbl{ font-family:"Geneva_9",sans-serif; font-size:11px; background:var(--paper); padding:0 3px; }
+  .dicon .lbl{ font-family:"Geneva_9",sans-serif; font-size:13px; background:var(--paper); padding:0 3px; }
   .dicon.sel .lbl{ background:var(--ink); color:var(--paper); }
 
   /* ── boot splash ── */
@@ -131,7 +131,7 @@
     padding:26px 40px; text-align:center; }
   #boot img{ width:48px; height:48px; image-rendering:pixelated; }
   #boot .t{ font-family:"Chicago",sans-serif; font-size:18px; margin:12px 0 4px; }
-  #boot .s{ font-family:"Geneva_9",sans-serif; font-size:12px; color:#555; }
+  #boot .s{ font-family:"Geneva_9",sans-serif; font-size:13px; color:#555; }
   #boot-ext{ position:absolute; bottom:28px; left:0; right:0; display:flex; justify-content:center; gap:8px; }
   #boot-ext img{ width:22px; height:22px; opacity:0; transition:opacity .14s; image-rendering:pixelated; }
   #boot-ext img.on{ opacity:1; }
@@ -318,7 +318,7 @@ const Draw = {
     host.innerHTML=this._wrap(w,h,inner); },
   bar(host,o){ o=o||{}; const data=o.data||[],w=300,barH=15,gap=7,labelW=o.labelW||78,max=o.max||Math.max(1,...data.map(d=>d.value||0)),h=Math.max(20,gap+data.length*(barH+gap)); let inner='';
     data.forEach((d,i)=>{ const y=gap+i*(barH+gap),bw=Math.max(0,(w-labelW-40)*((d.value||0)/max));
-      inner+='<text x="0" y="'+(y+barH-3)+'" font-size="11">'+esc(d.label)+'</text><rect x="'+labelW+'" y="'+y+'" width="'+bw+'" height="'+barH+'" fill="'+this.FILLS[i%this.FILLS.length]+'" stroke="#000"/><text x="'+(labelW+bw+4)+'" y="'+(y+barH-3)+'" font-size="10" font-family="Monaco">'+(d.value)+'</text>'; });
+      inner+='<text x="0" y="'+(y+barH-3)+'" font-size="13">'+esc(d.label)+'</text><rect x="'+labelW+'" y="'+y+'" width="'+bw+'" height="'+barH+'" fill="'+this.FILLS[i%this.FILLS.length]+'" stroke="#000"/><text x="'+(labelW+bw+4)+'" y="'+(y+barH-3)+'" font-size="12" font-family="Monaco">'+(d.value)+'</text>'; });
     host.innerHTML=this._wrap(w,h,inner,"xMinYMin meet"); },
   scatter(host,o){ o=o||{}; const pts=o.points||[],w=340,h=o.h||190; if(!pts.length){host.innerHTML='';return;}
     const pl=32,pr=10,pt=10,pb=24,xs=pts.map(p=>p.x),ys=pts.map(p=>p.y); let xmin=Math.min(...xs),xmax=Math.max(...xs),ymin=Math.min(...ys),ymax=Math.max(...ys);
@@ -326,8 +326,8 @@ const Draw = {
     const sx=v=>pl+((v-xmin)/(xmax-xmin))*(w-pl-pr),sy=v=>(h-pb)-((v-ymin)/(ymax-ymin))*(h-pb-pt);
     let inner='<line x1="'+pl+'" y1="'+pt+'" x2="'+pl+'" y2="'+(h-pb)+'" stroke="#000"/><line x1="'+pl+'" y1="'+(h-pb)+'" x2="'+(w-pr)+'" y2="'+(h-pb)+'" stroke="#000"/>';
     pts.forEach(p=>{ const x=sx(p.x),y=sy(p.y); if(p.ring) inner+='<circle cx="'+x+'" cy="'+y+'" r="5" fill="none" stroke="#000"/>';
-      inner+='<rect x="'+(x-2)+'" y="'+(y-2)+'" width="4" height="4" fill="#000"/>'+(p.label?'<text x="'+(x+7)+'" y="'+(y+3)+'" font-size="9">'+esc(p.label)+'</text>':''); });
-    inner+='<text x="'+((pl+w-pr)/2)+'" y="'+(h-5)+'" font-size="9" text-anchor="middle">'+esc(o.xlab||'')+'</text>';
+      inner+='<rect x="'+(x-2)+'" y="'+(y-2)+'" width="4" height="4" fill="#000"/>'+(p.label?'<text x="'+(x+7)+'" y="'+(y+3)+'" font-size="12">'+esc(p.label)+'</text>':''); });
+    inner+='<text x="'+((pl+w-pr)/2)+'" y="'+(h-5)+'" font-size="12" text-anchor="middle">'+esc(o.xlab||'')+'</text>';
     host.innerHTML=this._wrap(w,h,inner,"xMidYMid meet"); },
   sparkline(host,o){ o=o||{}; const d=o.data||[],w=120,h=o.h||22; if(d.length<2){host.innerHTML='';return;}
     const mn=Math.min(...d),mx=Math.max(...d),pts=d.map((v,i)=>((i/(d.length-1))*(w-2)+1)+','+(((h-2)-((v-mn)/((mx-mn)||1))*(h-4))+1)).join(' ');
@@ -393,7 +393,7 @@ const Theme = { KEY:"cru3-theme",
 const UIScale = { KEY:"cru3-scale", val:1,
   set(v){ this.val=v; document.body.style.zoom=v; try{ localStorage.setItem(this.KEY,String(v)); }catch(e){}
     document.querySelectorAll(".s3radio[data-scale]").forEach(r=>r.classList.toggle("on", parseFloat(r.getAttribute("data-scale"))===v)); },
-  init(){ let v=1.1; try{ const s=parseFloat(localStorage.getItem(this.KEY)); if(s) v=s; }catch(e){} this.set(v); } };
+  init(){ let v=1.3; try{ const s=parseFloat(localStorage.getItem(this.KEY)); if(s) v=s; }catch(e){} this.set(v); } };
 function mkPat(fn){ const a=[]; for(let i=0;i<64;i++) a.push(fn(i%8,(i/8)|0)?1:0); return a; }
 const PAT_PRESETS = { "50%":mkPat((x,y)=>(x+y)%2===0), "dots":mkPat((x,y)=>x%4===0&&y%4===0),
   "lines":mkPat((x,y)=>y%2===0), "weave":mkPat((x,y)=>x%4===0||y%4===0), "blank":mkPat(()=>0) };
@@ -447,7 +447,7 @@ function openReadme(){ WM.spawn("readme", {title:"Read Me", w:570, h:440, html:'
 function openAbout(){ const b=curBox()||{}, c=b.counts||{};
   WM.spawn("about", {title:"About Crucible", w:344, h:250, html:
     '<div style="display:flex;gap:14px;align-items:flex-start"><img src="'+ICON.mac+'" style="width:44px;height:44px;image-rendering:pixelated">'+
-    '<div style="font-family:Monaco,monospace;font-size:11px;line-height:1.7"><b style="font-family:Chicago,sans-serif;font-size:15px">Crucible</b><br>System 3 · inference-optimization lab<br><br>Target&nbsp; '+esc(b.nick||"—")+'<br>Ledger&nbsp; '+((c.blessed||0)+" blessed · "+(b.n_records||0)+" runs")+'<br>Built on system.css + interact.js</div></div>'+
+    '<div style="font-family:Monaco,monospace;font-size:13px;line-height:1.7"><b style="font-family:Chicago,sans-serif;font-size:15px">Crucible</b><br>System 3 · inference-optimization lab<br><br>Target&nbsp; '+esc(b.nick||"—")+'<br>Ledger&nbsp; '+((c.blessed||0)+" blessed · "+(b.n_records||0)+" runs")+'<br>Built on system.css + interact.js</div></div>'+
     '<div style="text-align:center;margin-top:16px"><img src="/vendor/classic-mac/dogcow.svg" style="width:38px;height:30px" title="Moof!"></div>'}); }
 async function openReport(rep){
   const b=curBox()||{}; const box=(b.box_dir||"").split("/").pop()||b.nick;
@@ -535,7 +535,7 @@ const PANELS = {
         pane.innerHTML =
           '<textarea class="std-input" id="st-text" rows="2" style="width:100%;resize:vertical" placeholder="point the campaign at a front…"></textarea>'+
           '<div class="btnrow"><span class="chips" id="st-tags"><span class="chip on" data-tag="">auto</span><span class="chip" data-tag="BOX">BOX</span><span class="chip" data-tag="HOST">HOST</span></span>'+
-          '<label style="font-size:11px"><input type="checkbox" id="st-research"> research</label><span style="flex:1"></span>'+
+          '<label style="font-size:13px"><input type="checkbox" id="st-research"> research</label><span style="flex:1"></span>'+
           '<button class="btn btn-default" data-steer="add">Add</button></div><div id="st-list" style="margin-top:6px"></div>';
       $("#st-list",pane).innerHTML = pend.length? pend.map((n,i)=>'<div class="feed-row">'+(n.tag?"["+esc(n.tag)+"] ":"")+esc(n.title||"")+'<span class="chip del" data-steer="del" data-n="'+(i+1)+'">✕</span></div>').join("") : '<div class="muted">no pending steering</div>'; } },
   queue: { title:"Queue", icon:ICON.list, layout:{x:360,y:24,w:340,h:240}, details:true,
@@ -594,7 +594,7 @@ const PANELS = {
       pane.innerHTML = '<div class="s3cp">'+
         '<div class="box span2"><span class="bt">Desktop Pattern</span><div class="patwrap"><div class="patgrid" id="s3-patgrid"></div><div><div class="patprev" id="cp-patprev"></div><div class="muted" style="margin-top:4px">click / drag</div></div><div class="patpresets" id="cp-presets"></div></div></div>'+
         '<div class="box"><span class="bt">Theme</span><div class="row">'+[["light","Light"],["invert","Night"],["amber","Amber"],["green","Green"]].map(o=>'<span class="s3radio" data-theme="'+o[0]+'"><i></i>'+o[1]+'</span>').join("")+'</div></div>'+
-        '<div class="box"><span class="bt">Text Size</span><div class="row">'+[["1","S"],["1.1","M"],["1.3","L"],["1.5","XL"]].map(o=>'<span class="s3radio" data-scale="'+o[0]+'"><i></i>'+o[1]+'</span>').join("")+'</div></div>'+
+        '<div class="box"><span class="bt">Text Size</span><div class="row">'+[["1.1","S"],["1.3","M"],["1.5","L"],["1.8","XL"]].map(o=>'<span class="s3radio" data-scale="'+o[0]+'"><i></i>'+o[1]+'</span>').join("")+'</div></div>'+
         '<div class="box"><span class="bt">Autonomy Tier</span><div class="row">'+["T1","T2","T3","T4"].map((t,i)=>'<span class="s3radio'+(i===3?" on":"")+'" data-tier="'+t+'"><i></i>'+t+'</span>').join("")+'</div></div>'+
         '<div class="box"><span class="bt">Window Defaults</span><div class="row">Length <input class="std-input" value="18" style="width:38px"> hrs</div><div class="row">Refill min <input class="std-input" value="5" style="width:32px"></div></div>'+
         '<div class="box"><span class="bt">Search</span><div class="row">Novelty-pivot K <input class="std-input" value="100" style="width:40px"></div><div class="row"><span class="s3radio on" data-grind><i></i>grind mode</span></div></div>'+
