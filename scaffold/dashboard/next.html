@@ -131,8 +131,9 @@
   #boot img{ width:48px; height:48px; image-rendering:pixelated; }
   #boot .t{ font-family:"Chicago",sans-serif; font-size:18px; margin:12px 0 4px; }
   #boot .s{ font-family:"Geneva_9",sans-serif; font-size:12px; color:#555; }
-  #boot .bar{ margin:16px auto 0; width:180px; height:12px; border:1px solid var(--ink); }
-  #boot .bar > span{ display:block; height:100%; width:0; background:var(--ink); transition:width .12s linear; }
+  #boot-ext{ position:absolute; bottom:28px; left:0; right:0; display:flex; justify-content:center; gap:8px; }
+  #boot-ext img{ width:22px; height:22px; opacity:0; transition:opacity .14s; image-rendering:pixelated; }
+  #boot-ext img.on{ opacity:1; }
 </style>
 </head>
 <body>
@@ -140,10 +141,10 @@
 <div id="boot">
   <div class="card">
     <img src="/vendor/classic-mac/happy-mac.svg" alt="">
-    <div class="t">Crucible</div>
-    <div class="s">Welcome to Macintosh</div>
-    <div class="bar"><span id="boot-bar"></span></div>
+    <div class="t">Welcome to Macintosh</div>
+    <div class="s">Crucible</div>
   </div>
+  <div id="boot-ext"></div>
 </div>
 
 <div id="menubar">
@@ -636,12 +637,24 @@ const Shell = {
 };
 
 // ── BOOT ─────────────────────────────────────────────────────────────────────────
+function chime(){                                    // a warm Mac-style startup chord (Web Audio, no asset)
+  try{ const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return; const ctx=new AC();
+    const play=()=>{ const t=ctx.currentTime, g=ctx.createGain();
+      g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.22,t+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t+1.7); g.connect(ctx.destination);
+      [130.81,164.81,196.0,261.63].forEach(f=>{ const o=ctx.createOscillator(); o.type="triangle"; o.frequency.value=f; o.connect(g); o.start(t); o.stop(t+1.75); }); };
+    if(ctx.state==="running") play();                // else browsers block autoplay -> play on the first gesture
+    else document.addEventListener("pointerdown", function once(){ document.removeEventListener("pointerdown",once); ctx.resume().then(play).catch(()=>{}); }, {once:true});
+  }catch(e){}
+}
 function boot(){
   Theme.init(); WM.init(); Shell.init(); Cockpit.init(); Desktop.init(); Pattern.apply();
-  let p=0; const bar=$("#boot-bar");
-  const iv=setInterval(()=>{ p=Math.min(100,p+14); bar.style.width=p+"%";
-    if(p>=100){ clearInterval(iv); $("#boot").classList.add("gone");
-      WM.restore(); poll(); setInterval(poll, 4000); } }, 90);
+  chime();
+  const row=$("#boot-ext"); ["folder","cpu","floppy","doc","chart","book","coins"].forEach(k=>{ const im=el("img"); im.src=ICON[k]; row.appendChild(im); });
+  const imgs=row.querySelectorAll("img"); let i=0;
+  const march=setInterval(()=>{
+    if(i<imgs.length){ imgs[i].classList.add("on"); i++; }
+    else { clearInterval(march); setTimeout(()=>{ $("#boot").classList.add("gone"); WM.restore(); poll(); setInterval(poll,4000); }, 380); }
+  }, 135);
 }
 boot();
 </script>
