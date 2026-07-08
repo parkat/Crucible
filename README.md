@@ -210,7 +210,8 @@ Peak RSS and roofline efficiency ride along as context.
 ## Requirements
 
 - **Host** (where the Claude Code session runs — never the target): `python3` (≥3.10, stdlib
-  only — the dashboard has zero third-party deps), `git`, `ssh`/`ssh-keygen`, and `sshpass`
+  only — no `pip install`; the dashboard *server* is pure stdlib and the client's front-end libs
+  are **vendored**, so nothing is fetched at runtime), `git`, `ssh`/`ssh-keygen`, and `sshpass`
   (installed once to seed the key). The host drives everything and serves the dashboard.
 - **Target** (the disposable salvage box): reachable over SSH with a sudo-capable user. Nothing
   is pre-installed — the agent builds the engine on the target itself. The box may be asleep;
@@ -441,3 +442,18 @@ nothing under `boxes/` (live campaign state, connection details) is ever tracked
 ## License
 
 [MIT](LICENSE) © 2026 Parker. Use it, fork it, run it on your own salvage hardware.
+
+## Credits
+
+The dashboard client self-hosts (vendors) a few third-party libraries — no CDN, nothing fetched at
+runtime. Each keeps its license under `scaffold/dashboard/vendor/`:
+
+- **[system.css](https://github.com/sakofchit/system.css)** — the System-6 monochrome UI kit +
+  Chicago / Geneva / Monaco faces. MIT © 2022 Sakun Acharige.
+- **[interact.js](https://interactjs.io/)** — window drag / resize / snap. MIT © Taye Adeyemi.
+- **[pixelarticons](https://github.com/halfmage/pixelarticons)** — the 1-bit menu / desktop icons.
+  MIT © 2019 Gerrit Halfmann.
+
+The few classic-Mac icon recreations under `vendor/classic-mac/` have **no stated license** (see its
+`NOTICE.txt`) and depict Apple UI marks (Happy Mac, the Dogcow/Clarus) — treat them as placeholders and
+replace them with licensed or original art before any public distribution.
