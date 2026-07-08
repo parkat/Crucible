@@ -8,7 +8,8 @@
 <script src="/vendor/interact.min.js"></script>
 <style>
   /* ── Crucible desktop shell (overrides + additions on top of system.css) ─────────────── */
-  :root{ --menubar-h:20px; --ink:#000; --paper:#fff; }
+  :root{ --menubar-h:24px; --ink:#000; --paper:#fff; }
+  ::selection{ background:var(--ink); color:var(--paper); }
   *{ box-sizing:border-box; }
   html,body{ height:100%; margin:0; overflow:hidden; -webkit-font-smoothing:none; }
   body{ font-family:"Geneva_9","Chicago",system-ui,sans-serif; color:var(--ink);
@@ -25,9 +26,9 @@
     z-index:9000; font-family:"Chicago",sans-serif; font-size:13px; user-select:none; }
   #menubar .mi{ display:flex; align-items:center; padding:0 11px; cursor:default; position:relative; }
   #menubar .mi:hover, #menubar .mi.open{ background:var(--ink); color:var(--paper); }
-  #menubar .apple{ padding:0 9px; }
-  #menubar .apple img{ width:13px; height:15px; display:block; }
-  #menubar .mi.open img, #menubar .apple:hover img{ filter:invert(1); }   /* apple inverts when active */
+  #menubar .apple{ padding:0 11px; justify-content:center; }
+  #menubar .apple img{ width:14px; height:16px; display:block; }
+  #menubar .mi.open > img, #menubar .apple:hover > img{ filter:invert(1); }   /* invert ONLY the apple logo, not dropdown icons */
   #menubar .clock{ margin-left:auto; padding:0 10px; font-family:"Monaco",monospace; font-size:12px; }
   .dropdown{ position:absolute; top:var(--menubar-h); left:0; min-width:210px; background:var(--paper);
     color:var(--ink); border:1px solid var(--ink); box-shadow:2px 2px 0 var(--ink); z-index:9001; padding:2px 0; display:none; }
@@ -205,7 +206,7 @@ const WM = {
   desk: null, z: 20, open: {},                    // id -> {win, pane, def}
   POS: JSON.parse(localStorage.getItem("cru3-pos")||"{}"),
   OPENSET: JSON.parse(localStorage.getItem("cru3-open")||"null"),
-  MENUBAR_H: 20, GAP: 10,
+  MENUBAR_H: 24, GAP: 10,
 
   init(){ this.desk=$("#desktop"); },
   saveOpen(){ localStorage.setItem("cru3-open", JSON.stringify(Object.keys(this.open))); },
@@ -266,14 +267,14 @@ const WM = {
     interact(win)
       .draggable({ allowFrom:".title-bar", ignoreFrom:".close,.resize",
         listeners:{ start(){ self.focus(win); },
-          move(e){ const x=Math.max(0,(parseFloat(win.style.left)||0)+e.dx),
-                          y=Math.max(self.MENUBAR_H,(parseFloat(win.style.top)||0)+e.dy);
+          move(e){ const z=UIScale.val||1, x=Math.max(0,(parseFloat(win.style.left)||0)+e.dx/z),
+                          y=Math.max(self.MENUBAR_H,(parseFloat(win.style.top)||0)+e.dy/z);
                    win.style.left=Math.round(x)+"px"; win.style.top=Math.round(y)+"px"; },
           end:persist } })
       .resizable({ edges:{ right:true, bottom:true }, allowFrom:".win-resize,.window",
         listeners:{ start(){ self.focus(win); },
-          move(e){ win.style.width=Math.max(200,Math.round(e.rect.width))+"px";
-                   win.style.height=Math.max(110,Math.round(e.rect.height))+"px"; },
+          move(e){ const z=UIScale.val||1; win.style.width=Math.max(200,Math.round(e.rect.width/z))+"px";
+                   win.style.height=Math.max(110,Math.round(e.rect.height/z))+"px"; },
           end:persist } });
     // let the corner grip proxy the window's bottom-right resize
     $(".win-resize",win).addEventListener("mousedown", ()=>self.focus(win));
@@ -389,6 +390,10 @@ const Theme = { KEY:"cru3-theme",
   set(t){ document.body.setAttribute("data-theme", t); try{ localStorage.setItem(this.KEY,t); }catch(e){}
     document.querySelectorAll(".s3radio[data-theme]").forEach(r=>r.classList.toggle("on", r.getAttribute("data-theme")===t)); },
   init(){ let t="light"; try{ t=localStorage.getItem(this.KEY)||"light"; }catch(e){} document.body.setAttribute("data-theme", t); } };
+const UIScale = { KEY:"cru3-scale", val:1,
+  set(v){ this.val=v; document.body.style.zoom=v; try{ localStorage.setItem(this.KEY,String(v)); }catch(e){}
+    document.querySelectorAll(".s3radio[data-scale]").forEach(r=>r.classList.toggle("on", parseFloat(r.getAttribute("data-scale"))===v)); },
+  init(){ let v=1.1; try{ const s=parseFloat(localStorage.getItem(this.KEY)); if(s) v=s; }catch(e){} this.set(v); } };
 function mkPat(fn){ const a=[]; for(let i=0;i<64;i++) a.push(fn(i%8,(i/8)|0)?1:0); return a; }
 const PAT_PRESETS = { "50%":mkPat((x,y)=>(x+y)%2===0), "dots":mkPat((x,y)=>x%4===0&&y%4===0),
   "lines":mkPat((x,y)=>y%2===0), "weave":mkPat((x,y)=>x%4===0||y%4===0), "blank":mkPat(()=>0) };
@@ -404,6 +409,7 @@ function syncPatGrid(){ const g=$("#s3-patgrid"); if(g) g.querySelectorAll("i").
 let _painting=null;
 document.addEventListener("click",(e)=>{
   const th=e.target.closest(".s3radio[data-theme]"); if(th){ Theme.set(th.getAttribute("data-theme")); Pattern.apply(); return; }
+  const sc=e.target.closest(".s3radio[data-scale]"); if(sc){ UIScale.set(parseFloat(sc.getAttribute("data-scale"))); return; }
   const tr=e.target.closest(".s3radio[data-tier]"); if(tr){ tr.parentElement.querySelectorAll(".s3radio").forEach(x=>x.classList.remove("on")); tr.classList.add("on"); return; }
   const gr=e.target.closest(".s3radio[data-grind]"); if(gr){ gr.classList.toggle("on"); return; }
   const ps=e.target.closest(".patpreset"); if(ps){ Pattern.data=PAT_PRESETS[ps.getAttribute("data-p")].slice(); Pattern.apply(); syncPatGrid(); return; }
@@ -588,6 +594,7 @@ const PANELS = {
       pane.innerHTML = '<div class="s3cp">'+
         '<div class="box span2"><span class="bt">Desktop Pattern</span><div class="patwrap"><div class="patgrid" id="s3-patgrid"></div><div><div class="patprev" id="cp-patprev"></div><div class="muted" style="margin-top:4px">click / drag</div></div><div class="patpresets" id="cp-presets"></div></div></div>'+
         '<div class="box"><span class="bt">Theme</span><div class="row">'+[["light","Light"],["invert","Night"],["amber","Amber"],["green","Green"]].map(o=>'<span class="s3radio" data-theme="'+o[0]+'"><i></i>'+o[1]+'</span>').join("")+'</div></div>'+
+        '<div class="box"><span class="bt">Text Size</span><div class="row">'+[["1","S"],["1.1","M"],["1.3","L"],["1.5","XL"]].map(o=>'<span class="s3radio" data-scale="'+o[0]+'"><i></i>'+o[1]+'</span>').join("")+'</div></div>'+
         '<div class="box"><span class="bt">Autonomy Tier</span><div class="row">'+["T1","T2","T3","T4"].map((t,i)=>'<span class="s3radio'+(i===3?" on":"")+'" data-tier="'+t+'"><i></i>'+t+'</span>').join("")+'</div></div>'+
         '<div class="box"><span class="bt">Window Defaults</span><div class="row">Length <input class="std-input" value="18" style="width:38px"> hrs</div><div class="row">Refill min <input class="std-input" value="5" style="width:32px"></div></div>'+
         '<div class="box"><span class="bt">Search</span><div class="row">Novelty-pivot K <input class="std-input" value="100" style="width:40px"></div><div class="row"><span class="s3radio on" data-grind><i></i>grind mode</span></div></div>'+
@@ -597,6 +604,7 @@ const PANELS = {
       $("#cp-presets",pane).innerHTML = Object.keys(PAT_PRESETS).map(k=>'<div class="patpreset" data-p="'+k+'" title="'+k+'" style="background:'+patURL(PAT_PRESETS[k])+';background-size:6px 6px"></div>').join("");
       const cur=document.body.getAttribute("data-theme")||"light";
       pane.querySelectorAll(".s3radio[data-theme]").forEach(r=>r.classList.toggle("on", r.getAttribute("data-theme")===cur));
+      pane.querySelectorAll(".s3radio[data-scale]").forEach(r=>r.classList.toggle("on", parseFloat(r.getAttribute("data-scale"))===UIScale.val));
       Pattern.apply(); } },
 };
 const DEFAULT_OPEN = ["run","agent","telemetry","hardware"];   // the cockpit (operator's chosen default view)
@@ -647,7 +655,7 @@ function chime(){                                    // a warm Mac-style startup
   }catch(e){}
 }
 function boot(){
-  Theme.init(); WM.init(); Shell.init(); Cockpit.init(); Desktop.init(); Pattern.apply();
+  Theme.init(); UIScale.init(); WM.init(); Shell.init(); Cockpit.init(); Desktop.init(); Pattern.apply();
   chime();
   const row=$("#boot-ext"); ["folder","cpu","floppy","doc","chart","book","coins"].forEach(k=>{ const im=el("img"); im.src=ICON[k]; row.appendChild(im); });
   const imgs=row.querySelectorAll("img"); let i=0;
