@@ -47,7 +47,7 @@
   .dk-label:first-child{ margin-top:0; }
   /* ── cockpit: buttons, feed, toasts, confirm ── */
   .btnrow{ display:flex; gap:7px; flex-wrap:wrap; align-items:center; margin-top:8px; }
-  .feed{ font-family:"Monaco",monospace; font-size:13px; line-height:1.55; }
+  .feed{ font-family:"Monaco",monospace; font-size:15px; line-height:1.55; }
   .feed-row{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .std-input{ font-family:"Monaco",monospace; border:1px solid var(--ink); background:var(--paper); padding:1px 4px; }
   #toasts{ position:fixed; right:14px; bottom:14px; z-index:9998; display:flex; flex-direction:column; gap:6px; }
@@ -390,10 +390,10 @@ const Theme = { KEY:"cru3-theme",
   set(t){ document.body.setAttribute("data-theme", t); try{ localStorage.setItem(this.KEY,t); }catch(e){}
     document.querySelectorAll(".s3radio[data-theme]").forEach(r=>r.classList.toggle("on", r.getAttribute("data-theme")===t)); },
   init(){ let t="light"; try{ t=localStorage.getItem(this.KEY)||"light"; }catch(e){} document.body.setAttribute("data-theme", t); } };
-const UIScale = { KEY:"cru3-scale", val:1,
+const UIScale = { KEY:"cru3-scale2", val:1,
   set(v){ this.val=v; document.body.style.zoom=v; try{ localStorage.setItem(this.KEY,String(v)); }catch(e){}
     document.querySelectorAll(".s3radio[data-scale]").forEach(r=>r.classList.toggle("on", parseFloat(r.getAttribute("data-scale"))===v)); },
-  init(){ let v=1.3; try{ const s=parseFloat(localStorage.getItem(this.KEY)); if(s) v=s; }catch(e){} this.set(v); } };
+  init(){ let v=1.35; try{ const s=parseFloat(localStorage.getItem(this.KEY)); if(s) v=s; }catch(e){} this.set(v); } };
 function mkPat(fn){ const a=[]; for(let i=0;i<64;i++) a.push(fn(i%8,(i/8)|0)?1:0); return a; }
 const PAT_PRESETS = { "50%":mkPat((x,y)=>(x+y)%2===0), "dots":mkPat((x,y)=>x%4===0&&y%4===0),
   "lines":mkPat((x,y)=>y%2===0), "weave":mkPat((x,y)=>x%4===0||y%4===0), "blank":mkPat(()=>0) };
@@ -594,7 +594,7 @@ const PANELS = {
       pane.innerHTML = '<div class="s3cp">'+
         '<div class="box span2"><span class="bt">Desktop Pattern</span><div class="patwrap"><div class="patgrid" id="s3-patgrid"></div><div><div class="patprev" id="cp-patprev"></div><div class="muted" style="margin-top:4px">click / drag</div></div><div class="patpresets" id="cp-presets"></div></div></div>'+
         '<div class="box"><span class="bt">Theme</span><div class="row">'+[["light","Light"],["invert","Night"],["amber","Amber"],["green","Green"]].map(o=>'<span class="s3radio" data-theme="'+o[0]+'"><i></i>'+o[1]+'</span>').join("")+'</div></div>'+
-        '<div class="box"><span class="bt">Text Size</span><div class="row">'+[["1.1","S"],["1.3","M"],["1.5","L"],["1.8","XL"]].map(o=>'<span class="s3radio" data-scale="'+o[0]+'"><i></i>'+o[1]+'</span>').join("")+'</div></div>'+
+        '<div class="box"><span class="bt">Text Size</span><div class="row">'+[["1.15","S"],["1.35","M"],["1.6","L"],["1.9","XL"]].map(o=>'<span class="s3radio" data-scale="'+o[0]+'"><i></i>'+o[1]+'</span>').join("")+'</div></div>'+
         '<div class="box"><span class="bt">Autonomy Tier</span><div class="row">'+["T1","T2","T3","T4"].map((t,i)=>'<span class="s3radio'+(i===3?" on":"")+'" data-tier="'+t+'"><i></i>'+t+'</span>').join("")+'</div></div>'+
         '<div class="box"><span class="bt">Window Defaults</span><div class="row">Length <input class="std-input" value="18" style="width:38px"> hrs</div><div class="row">Refill min <input class="std-input" value="5" style="width:32px"></div></div>'+
         '<div class="box"><span class="bt">Search</span><div class="row">Novelty-pivot K <input class="std-input" value="100" style="width:40px"></div><div class="row"><span class="s3radio on" data-grind><i></i>grind mode</span></div></div>'+
