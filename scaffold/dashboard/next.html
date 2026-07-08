@@ -1,0 +1,281 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crucible — System 3</title>
+<link rel="stylesheet" href="/vendor/system.css/style.css">
+<script src="/vendor/interact.min.js"></script>
+<style>
+  /* ── Crucible desktop shell (overrides + additions on top of system.css) ─────────────── */
+  :root{ --menubar-h:20px; --ink:#000; --paper:#fff; }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; margin:0; overflow:hidden; -webkit-font-smoothing:none; }
+  body{ font-family:"Geneva_9","Chicago",system-ui,sans-serif; color:var(--ink);
+    background:var(--paper); }
+  /* desktop = the 50% dither classic pattern; the Control Panel pattern editor will replace it later */
+  #desktop{ position:fixed; inset:var(--menubar-h) 0 0 0;
+    background-color:var(--paper);
+    background-image:repeating-conic-gradient(#000 0 25%, #fff 0 50%);
+    background-size:2px 2px; overflow:hidden; }
+
+  /* ── menu bar ── */
+  #menubar{ position:fixed; top:0; left:0; right:0; height:var(--menubar-h);
+    background:var(--paper); border-bottom:1px solid var(--ink); display:flex; align-items:stretch;
+    z-index:9000; font-family:"Chicago",sans-serif; font-size:13px; user-select:none; }
+  #menubar .mi{ display:flex; align-items:center; padding:0 11px; cursor:default; position:relative; }
+  #menubar .mi:hover, #menubar .mi.open{ background:var(--ink); color:var(--paper); }
+  #menubar .apple{ padding:0 9px; }
+  #menubar .apple img{ width:13px; height:15px; display:block; }
+  #menubar .mi.open .apple-invert, #menubar .apple:hover img{ filter:invert(1); }
+  #menubar .clock{ margin-left:auto; padding:0 10px; font-family:"Monaco",monospace; font-size:12px; }
+  .dropdown{ position:absolute; top:var(--menubar-h); left:0; min-width:210px; background:var(--paper);
+    border:1px solid var(--ink); box-shadow:2px 2px 0 var(--ink); z-index:9001; padding:2px 0; display:none; }
+  .dropdown.open{ display:block; }
+  .dropdown .di{ display:flex; align-items:center; gap:9px; padding:3px 16px 3px 12px; font-size:13px; cursor:default; white-space:nowrap; }
+  .dropdown .di:hover{ background:var(--ink); color:var(--paper); }
+  .dropdown .di:hover img{ filter:invert(1); }
+  .dropdown .di img{ width:16px; height:16px; }
+  .dropdown .di.checked{ font-weight:bold; }
+  .dropdown .sep{ border-top:1px solid var(--ink); opacity:.35; margin:3px 0; }
+
+  /* ── windows (system.css .window, positioned + interactive) ── */
+  #desktop .window{ position:absolute; display:flex; flex-direction:column; min-width:200px; min-height:110px; }
+  #desktop .window .window-pane{ flex:1 1 auto; overflow:auto; margin:0; min-height:0; }
+  .win-resize{ position:absolute; right:0; bottom:0; width:16px; height:16px; cursor:nwse-resize;
+    background:var(--paper); border-left:1px solid var(--ink); border-top:1px solid var(--ink); z-index:3; }
+  .win-resize::after{ content:""; position:absolute; inset:3px 3px 4px 4px;
+    background:repeating-linear-gradient(135deg, #000 0 1px, #fff 1px 3px); }
+  .title-bar{ cursor:grab; }
+  .kv{ display:flex; justify-content:space-between; gap:12px; padding:2px 0; font-size:12px; }
+  .kv .k{ color:#555; } .kv .v{ font-family:"Monaco",monospace; }
+  .muted{ color:#777; font-size:11px; }
+
+  /* ── desktop icons ── */
+  .dicon{ position:absolute; width:74px; text-align:center; cursor:default; user-select:none; z-index:5; }
+  .dicon img{ width:32px; height:32px; display:block; margin:0 auto 2px; }
+  .dicon .lbl{ font-family:"Geneva_9",sans-serif; font-size:11px; background:var(--paper); padding:0 3px; }
+  .dicon.sel .lbl{ background:var(--ink); color:var(--paper); }
+
+  /* ── boot splash ── */
+  #boot{ position:fixed; inset:0; z-index:10000; background:#bbb;
+    background-image:repeating-conic-gradient(#aaa 0 25%, #cfcfcf 0 50%); background-size:2px 2px;
+    display:flex; align-items:center; justify-content:center; transition:opacity .4s ease; }
+  #boot.gone{ opacity:0; pointer-events:none; }
+  #boot .card{ background:var(--paper); border:1px solid var(--ink); box-shadow:2px 2px 0 var(--ink);
+    padding:26px 40px; text-align:center; }
+  #boot img{ width:48px; height:48px; image-rendering:pixelated; }
+  #boot .t{ font-family:"Chicago",sans-serif; font-size:18px; margin:12px 0 4px; }
+  #boot .s{ font-family:"Geneva_9",sans-serif; font-size:12px; color:#555; }
+  #boot .bar{ margin:16px auto 0; width:180px; height:12px; border:1px solid var(--ink); }
+  #boot .bar > span{ display:block; height:100%; width:0; background:var(--ink); transition:width .12s linear; }
+</style>
+</head>
+<body>
+
+<div id="boot">
+  <div class="card">
+    <img src="/vendor/classic-mac/happy-mac.svg" alt="">
+    <div class="t">Crucible</div>
+    <div class="s">Welcome to Macintosh</div>
+    <div class="bar"><span id="boot-bar"></span></div>
+  </div>
+</div>
+
+<div id="menubar">
+  <div class="mi apple" data-menu="apple"><img src="/vendor/system.css/icon/apple.svg" alt="Apple"></div>
+  <div class="mi" data-menu="view">View</div>
+  <div class="clock" id="clock">Crucible</div>
+</div>
+
+<div id="desktop"></div>
+
+<script>
+"use strict";
+// ══════════════════════════════════════════════════════════════════════════════
+// Crucible System-3 client — Phase 1: desktop shell + window-manager core.
+// Clean, module-shaped: DATA (poll) · WM (windows) · PANELS (registry) · SHELL (menus/boot).
+// Backend unchanged — reads /data, acts via /action.
+// ══════════════════════════════════════════════════════════════════════════════
+const $ = (s,r)=> (r||document).querySelector(s);
+const el = (t,c,h)=>{ const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e; };
+const ICON = {                                   // concept -> vendored svg
+  mac:"/vendor/classic-mac/classic-mac.svg", trash:"/vendor/classic-mac/trash.svg",
+  floppy:"/vendor/classic-mac/floppy.svg", doc:"/vendor/classic-mac/text-file.svg",
+  folder:"/vendor/pixelarticons/folder.svg", cpu:"/vendor/pixelarticons/cpu.svg",
+  chart:"/vendor/pixelarticons/chart-bar-big.svg", trophy:"/vendor/pixelarticons/trophy.svg",
+  book:"/vendor/pixelarticons/book-open.svg", coins:"/vendor/pixelarticons/coins.svg",
+  zap:"/vendor/pixelarticons/zap.svg", clock:"/vendor/pixelarticons/clock.svg",
+  play:"/vendor/pixelarticons/play.svg", search:"/vendor/pixelarticons/search.svg",
+};
+
+// ── DATA ───────────────────────────────────────────────────────────────────────
+const DATA = { boxes:[], now:0, sel:null };
+function curBox(){ return DATA.boxes.find(b=>b.nick===DATA.sel) || DATA.boxes[0] || null; }
+async function poll(){
+  try{
+    const d = await (await fetch("/data",{cache:"no-store"})).json();
+    if(d.error) return;
+    DATA.boxes=d.boxes||[]; DATA.now=d.now;
+    if(!DATA.sel || !DATA.boxes.some(b=>b.nick===DATA.sel)) DATA.sel=(DATA.boxes[0]||{}).nick||null;
+    WM.renderAll();
+    Shell.tickClock();
+  }catch(e){ /* stay up; retry next tick */ }
+}
+
+// ── WM : the window manager core ────────────────────────────────────────────────
+const WM = {
+  desk: null, z: 20, open: {},                    // id -> {win, pane, def}
+  POS: JSON.parse(localStorage.getItem("cru3-pos")||"{}"),
+  OPENSET: JSON.parse(localStorage.getItem("cru3-open")||"null"),
+  MENUBAR_H: 20, GAP: 10,
+
+  init(){ this.desk=$("#desktop"); },
+  saveOpen(){ localStorage.setItem("cru3-open", JSON.stringify(Object.keys(this.open))); },
+  savePos(){ localStorage.setItem("cru3-pos", JSON.stringify(this.POS)); },
+
+  geom(id){                                        // saved -> LAYOUT -> cascade
+    if(this.POS[id]) return this.POS[id];
+    const L = (PANELS[id]||{}).layout;
+    if(L) return L;
+    const n=Object.keys(this.open).length; return { x:24+n*26, y:24+n*22, w:320, h:220 };
+  },
+  focus(win){ win.style.zIndex=(++this.z); },
+
+  openWin(id){
+    const def = PANELS[id]; if(!def) return;
+    if(this.open[id]){ this.focus(this.open[id].win); return; }
+    const g = this.geom(id);
+    const win = el("div","window");
+    win.style.left=g.x+"px"; win.style.top=g.y+"px"; win.style.width=g.w+"px"; win.style.height=g.h+"px";
+    win.innerHTML =
+      '<div class="title-bar">'+
+        '<button aria-label="Close" class="close"></button>'+
+        '<h1 class="title">'+def.title+'</h1>'+
+        '<button aria-label="Resize" class="resize" style="visibility:hidden"></button>'+
+      '</div>'+
+      (def.details? '<div class="details-bar"><span class="details-bar-text" id="det-'+id+'"></span></div>':'')+
+      '<div class="window-pane" id="pane-'+id+'"></div>'+
+      '<div class="win-resize"></div>';
+    this.desk.appendChild(win);
+    const rec = { win, pane:$("#pane-"+id, win), det:$("#det-"+id, win), def };
+    this.open[id]=rec;
+    win.addEventListener("mousedown", ()=>this.focus(win));
+    $(".close",win).addEventListener("click", (e)=>{ e.stopPropagation(); this.closeWin(id); });
+    this._wireInteract(id, win);
+    this.focus(win); this.render(id); this.saveOpen(); Shell.syncMenu();
+    return rec;
+  },
+  closeWin(id){ const r=this.open[id]; if(!r)return; r.win.remove(); delete this.open[id]; this.saveOpen(); Shell.syncMenu(); },
+
+  _wireInteract(id, win){
+    const self=this;
+    function persist(){ self.POS[id]={ x:parseFloat(win.style.left)||0, y:parseFloat(win.style.top)||0,
+      w:parseFloat(win.style.width)||320, h:parseFloat(win.style.height)||220 }; self.savePos(); }
+    interact(win)
+      .draggable({ allowFrom:".title-bar", ignoreFrom:".close,.resize",
+        listeners:{ start(){ self.focus(win); },
+          move(e){ const x=Math.max(0,(parseFloat(win.style.left)||0)+e.dx),
+                          y=Math.max(self.MENUBAR_H,(parseFloat(win.style.top)||0)+e.dy);
+                   win.style.left=Math.round(x)+"px"; win.style.top=Math.round(y)+"px"; },
+          end:persist } })
+      .resizable({ edges:{ right:true, bottom:true }, allowFrom:".win-resize,.window",
+        listeners:{ start(){ self.focus(win); },
+          move(e){ win.style.width=Math.max(200,Math.round(e.rect.width))+"px";
+                   win.style.height=Math.max(110,Math.round(e.rect.height))+"px"; },
+          end:persist } });
+    // let the corner grip proxy the window's bottom-right resize
+    $(".win-resize",win).addEventListener("mousedown", ()=>self.focus(win));
+  },
+
+  render(id){ const r=this.open[id]; if(!r)return; const b=curBox();
+    try{ r.def.render(b, r.pane, r.det); }catch(e){ r.pane.innerHTML='<div class="muted">render error: '+e.message+'</div>'; } },
+  renderAll(){ Object.keys(this.open).forEach(id=>this.render(id)); },
+
+  tile(){                                          // Clean Up — arrange open windows in a grid
+    const ids=Object.keys(this.open); if(!ids.length)return;
+    const W=this.desk.clientWidth, H=this.desk.clientHeight;
+    const cols=Math.ceil(Math.sqrt(ids.length)), rows=Math.ceil(ids.length/cols);
+    const cw=Math.floor((W-this.GAP*(cols+1))/cols), ch=Math.floor((H-this.GAP*(rows+1))/rows);
+    ids.forEach((id,i)=>{ const c=i%cols, r=Math.floor(i/cols), w=this.open[id].win;
+      const x=this.GAP+c*(cw+this.GAP), y=this.GAP+r*(ch+this.GAP);
+      w.style.left=x+"px"; w.style.top=y+"px"; w.style.width=cw+"px"; w.style.height=ch+"px";
+      this.POS[id]={x,y,w:cw,h:ch}; });
+    this.savePos();
+  },
+  restore(){                                       // open the saved set (or the default) at boot
+    const ids = (this.OPENSET && this.OPENSET.length) ? this.OPENSET : DEFAULT_OPEN;
+    ids.forEach(id=> PANELS[id] && this.openWin(id));
+  },
+};
+
+// ── PANELS registry (Phase 1: proof windows; more land in later phases) ──────────
+function fmtDur(s){ if(s==null)return"—"; if(s<0)return"overdue"; return Math.floor(s/3600)+"h "+Math.floor(s%3600/60)+"m"; }
+function fmtClock(ep){ if(!ep)return"—"; const d=new Date(ep*1000); return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); }
+const PANELS = {
+  window: { title:"Window status", icon:ICON.clock, layout:{x:24,y:24,w:300,h:200}, details:true,
+    render(b, pane, det){ if(!b){ pane.innerHTML='<div class="muted">no campaign data</div>'; return; }
+      const w=b.window||{}, c=b.campaign||{}, state=(w.state||c.state||"?");
+      if(det) det.textContent = state+"  ·  "+(b.nick||"");
+      pane.innerHTML =
+        '<div class="kv"><span class="k">state</span><span class="v">'+state+'</span></div>'+
+        '<div class="kv"><span class="k">to winddown</span><span class="v">'+fmtDur(b.remaining_winddown_s)+'</span></div>'+
+        '<div class="kv"><span class="k">to deadline</span><span class="v">'+fmtDur(b.remaining_s)+'</span></div>'+
+        '<div class="kv"><span class="k">deadline</span><span class="v">'+fmtClock(c.deadline_epoch)+'</span></div>'; } },
+  agent: { title:"Live agent", icon:ICON.zap, layout:{x:340,y:24,w:320,h:200}, details:true,
+    render(b, pane, det){ const a=(b||{}).agent||{};
+      if(det) det.textContent = "driver · claude -p";
+      pane.innerHTML =
+        '<div class="kv"><span class="k">unit</span><span class="v">#'+(a.current_unit!=null?a.current_unit:"—")+'</span></div>'+
+        '<div class="kv"><span class="k">launched</span><span class="v">'+(a.units_launched!=null?a.units_launched:"—")+'</span></div>'+
+        '<div class="kv"><span class="k">cost (win)</span><span class="v">$'+((a.cost_window_usd||0).toFixed(2))+'</span></div>'+
+        '<div class="kv"><span class="k">tok/s</span><span class="v">'+(a.tok_s_window!=null?a.tok_s_window:"—")+'</span></div>'; } },
+};
+const DEFAULT_OPEN = ["window","agent"];           // Phase 1 default workspace (cockpit expands later)
+
+// ── SHELL : menu bar, apple launcher, clock, boot ────────────────────────────────
+const Shell = {
+  init(){
+    const bar=$("#menubar");
+    this.aDrop = this._dropdown(bar.querySelector('[data-menu="apple"]'));
+    this.vDrop = this._dropdown(bar.querySelector('[data-menu="view"]'));
+    this.vDrop.innerHTML =
+      '<div class="di" data-act="cleanup">Clean Up Windows</div>'+
+      '<div class="di" data-act="closeall">Close All Windows</div>';
+    this.buildApple();
+    bar.addEventListener("click",(e)=>{ const mi=e.target.closest(".mi"); if(!mi)return; e.stopPropagation(); this._toggle(mi); });
+    document.addEventListener("click",()=>this._closeMenus());
+    this.aDrop.addEventListener("click",(e)=>{ const di=e.target.closest(".di"); if(!di)return;
+      if(di.dataset.open) WM.openWin(di.dataset.open); });
+    this.vDrop.addEventListener("click",(e)=>{ const di=e.target.closest(".di"); if(!di)return;
+      if(di.dataset.act==="cleanup") WM.tile();
+      if(di.dataset.act==="closeall") Object.keys(WM.open).forEach(id=>WM.closeWin(id)); });
+  },
+  _dropdown(mi){ const d=el("div","dropdown"); mi.appendChild(d); return d; },
+  _toggle(mi){ const d=mi.querySelector(".dropdown"); if(!d)return; const wasOpen=d.classList.contains("open");
+    this._closeMenus(); if(!wasOpen){ d.classList.add("open"); mi.classList.add("open"); } },
+  _closeMenus(){ document.querySelectorAll("#menubar .mi.open").forEach(m=>m.classList.remove("open"));
+    document.querySelectorAll(".dropdown.open").forEach(d=>d.classList.remove("open")); },
+  buildApple(){
+    let h='<div class="di" data-open="__about">About Crucible…</div><div class="sep"></div>';
+    for(const id in PANELS){ const p=PANELS[id];
+      h+='<div class="di win-item" data-open="'+id+'"><img src="'+(p.icon||ICON.folder)+'">'+p.title+'</div>'; }
+    this.aDrop.innerHTML=h; this.syncMenu();
+  },
+  syncMenu(){ this.aDrop.querySelectorAll(".win-item").forEach(di=>di.classList.toggle("checked", !!WM.open[di.dataset.open])); },
+  tickClock(){ const b=curBox(); const rem=b&&b.remaining_s; const c=$("#clock");
+    c.textContent = (b?b.nick:"Crucible") + (rem!=null? "  "+fmtDur(rem) : ""); },
+};
+
+// ── BOOT ─────────────────────────────────────────────────────────────────────────
+function boot(){
+  WM.init(); Shell.init();
+  let p=0; const bar=$("#boot-bar");
+  const iv=setInterval(()=>{ p=Math.min(100,p+14); bar.style.width=p+"%";
+    if(p>=100){ clearInterval(iv); $("#boot").classList.add("gone");
+      WM.restore(); poll(); setInterval(poll, 4000); } }, 90);
+}
+boot();
+</script>
+</body>
+</html>
