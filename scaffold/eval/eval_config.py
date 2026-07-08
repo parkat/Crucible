@@ -96,9 +96,13 @@ def _build_cmd(prompt, n, temp):
 
 
 def _run_once(cmd):
+    # A degenerate/aggressively-quantized model can emit raw bytes that aren't valid UTF-8;
+    # text=True decodes with strict errors by default and would crash the whole battery on
+    # one bad sample (K258) instead of grading that sample as garbage. errors="replace" keeps
+    # the run alive and lets Tier-0 degeneracy grading see the mangled output as mangled.
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=900,
-                           stdin=subprocess.DEVNULL)
+                           stdin=subprocess.DEVNULL, errors="replace")
     except subprocess.TimeoutExpired:
         return ""
     return p.stdout or ""
