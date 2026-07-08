@@ -1069,6 +1069,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, _read(os.path.join(HERE, "index.html")), "text/html; charset=utf-8")
         elif self.path.split("?")[0].startswith("/fonts/"):     # static fonts (e.g. the System 3.0 Chicago face)
             self._serve_font()
+        elif self.path.split("?")[0].startswith("/vendor/"):    # vendored libs (system.css, interact.js, …)
+            self._serve_vendor()
         else:
             self._send(404, "not found", "text/plain")
 
@@ -1084,6 +1086,27 @@ class Handler(BaseHTTPRequestHandler):
             data = f.read()
         self.send_response(200)
         self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        self.wfile.write(data)
+
+    _VENDOR_MIME = {"css": "text/css", "js": "application/javascript", "svg": "image/svg+xml",
+                    "png": "image/png", "woff2": "font/woff2", "woff": "font/woff", "ttf": "font/ttf",
+                    "json": "application/json", "map": "application/json"}
+
+    def _serve_vendor(self):
+        rel = self.path.split("?")[0][len("/vendor/"):]
+        base = os.path.normpath(os.path.join(HERE, "vendor"))
+        path = os.path.normpath(os.path.join(base, rel))
+        if not (path == base or path.startswith(base + os.sep)) or not os.path.isfile(path):  # no path-traversal escape
+            self._send(404, "not found", "text/plain")
+            return
+        ext = path.rsplit(".", 1)[-1].lower() if "." in os.path.basename(path) else ""
+        with open(path, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", self._VENDOR_MIME.get(ext, "application/octet-stream"))
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "max-age=86400")
         self.end_headers()
