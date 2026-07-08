@@ -27,10 +27,10 @@
   #menubar .mi:hover, #menubar .mi.open{ background:var(--ink); color:var(--paper); }
   #menubar .apple{ padding:0 9px; }
   #menubar .apple img{ width:13px; height:15px; display:block; }
-  #menubar .mi.open .apple-invert, #menubar .apple:hover img{ filter:invert(1); }
+  #menubar .mi.open img, #menubar .apple:hover img{ filter:invert(1); }   /* apple inverts when active */
   #menubar .clock{ margin-left:auto; padding:0 10px; font-family:"Monaco",monospace; font-size:12px; }
   .dropdown{ position:absolute; top:var(--menubar-h); left:0; min-width:210px; background:var(--paper);
-    border:1px solid var(--ink); box-shadow:2px 2px 0 var(--ink); z-index:9001; padding:2px 0; display:none; }
+    color:var(--ink); border:1px solid var(--ink); box-shadow:2px 2px 0 var(--ink); z-index:9001; padding:2px 0; display:none; }
   .dropdown.open{ display:block; }
   .dropdown .di{ display:flex; align-items:center; gap:9px; padding:3px 16px 3px 12px; font-size:13px; cursor:default; white-space:nowrap; }
   .dropdown .di:hover{ background:var(--ink); color:var(--paper); }
