@@ -78,13 +78,18 @@ _ANS_MARKERS = (
     r"(?:final answer|the answer is|answer\s*[:=])\s*\$?\s*(-?\d[\d,]*(?:\.\d+)?)",  # phrase
 )
 
+_REASONING_TAGS = ("think", "thought")  # K304: EXAONE-Deep uses <thought>, not <think> — same class of tag, different name
+
 def _strip_think(text: str) -> str:
-    """Drop a <think>...</think> reasoning span (or a dangling, unclosed <think>… preamble) so the
-    graders read the ANSWER, not the scratch work. Generic to any reasoning-tagged model (R1-distill…)."""
+    """Drop a <tag>...</tag> reasoning span (or a dangling, unclosed <tag>… preamble) so the
+    graders read the ANSWER, not the scratch work. Generic to any reasoning-tagged model (R1-distill,
+    EXAONE-Deep's <thought>…)."""
     if not text:
         return text or ""
-    t = re.sub(r"<think>.*?</think>", " ", text, flags=re.S | re.I)   # closed reasoning spans
-    t = re.sub(r"<think>.*$", " ", t, flags=re.S | re.I)             # truncated/unclosed preamble
+    t = text
+    for tag in _REASONING_TAGS:
+        t = re.sub(rf"<{tag}>.*?</{tag}>", " ", t, flags=re.S | re.I)   # closed reasoning spans
+        t = re.sub(rf"<{tag}>.*$", " ", t, flags=re.S | re.I)           # truncated/unclosed preamble
     return t
 
 def _extract_answer_number(text: str):

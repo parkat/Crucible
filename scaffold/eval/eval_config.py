@@ -112,7 +112,9 @@ def _run_once(cmd):
 # consume the whole token budget before the model ever emits its actual answer — an open,
 # never-closed <think> tag is a harness truncation artifact, not a real (bad) response, and
 # must not be graded as one. Generic to any reasoning-tagged model, not a one-model patch.
-THINK_OPEN, THINK_CLOSE = "<think>", "</think>"
+# K304: EXAONE-Deep tags its reasoning span <thought>, not <think> -- same failure mode, different
+# tag name, so the open/close pairs are a list, not a single hardcoded pair.
+REASONING_TAGS = [("<think>", "</think>"), ("<thought>", "</thought>")]
 REASONING_RETRY_MULT = 4
 
 
@@ -129,7 +131,7 @@ def gen(prompt, n=160, temp=0.0, retries=2, answer_probe=None):
     # Proposal-E: escalate the token budget when the ANSWER is missing. The old check only caught an
     # unclosed <think>; but plain verbose CoT (no tags) truncates the same way, so we also fire on a
     # battery-specific probe that finds no extractable answer. One shot at a much larger budget.
-    need_more = (THINK_OPEN in out and THINK_CLOSE not in out) or \
+    need_more = any(open_tag in out and close_tag not in out for open_tag, close_tag in REASONING_TAGS) or \
                 (answer_probe is not None and not answer_probe(out))
     if need_more:
         bigger = _run_once(_build_cmd(prompt, n * REASONING_RETRY_MULT, temp))
