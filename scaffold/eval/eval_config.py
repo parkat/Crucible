@@ -100,12 +100,19 @@ def _run_once(cmd):
     # text=True decodes with strict errors by default and would crash the whole battery on
     # one bad sample (K258) instead of grading that sample as garbage. errors="replace" keeps
     # the run alive and lets Tier-0 degeneracy grading see the mangled output as mangled.
+    #
+    # Returns (text, timed_out, failed) so gen() can tell three cases apart (findings #6/#44):
+    #   timed_out -> the config's real, bad behavior; never retry or escalate a hang;
+    #   failed    -> a process CRASH (nonzero rc / spawn error); a fresh process may recover -> retry;
+    #   clean ""  -> deterministic immediate-EOS; a re-run gives the same nothing -> don't retry.
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=900,
                            stdin=subprocess.DEVNULL, errors="replace")
     except subprocess.TimeoutExpired:
-        return ""
-    return p.stdout or ""
+        return "", True, False
+    except OSError:
+        return "", False, True
+    return (p.stdout or ""), False, (p.returncode != 0)
 
 
 # K250/K252: a `<think>...</think>` reasoning preamble (DeepSeek-R1-distill and similar) can
@@ -120,22 +127,30 @@ REASONING_RETRY_MULT = 4
 
 def gen(prompt, n=160, temp=0.0, retries=2, answer_probe=None):
     cmd = _build_cmd(prompt, n, temp)
-    # Generation is greedy+seeded (deterministic), so an empty result is NOT the model's
-    # real output — it's a transient process/GPU-reload hiccup (the harness reloads the full
-    # model per prompt). Retry empties a few times; a fresh process recovers the real output.
-    out = ""
+    # Retry only helps a TRANSIENT process crash (a fresh process may reload the model and recover).
+    # A timeout is the config's real bad behavior (#6) and a clean empty is deterministic immediate-
+    # EOS (#44) — neither changes on a re-run, so neither is retried. This caps a hanging/misrouted
+    # config at ~1 run instead of the old 3x900s retries + a 4x-budget escalation (~3600s/item).
+    out, timed_out = "", False
     for _ in range(retries + 1):
-        out = _run_once(cmd)
-        if out.strip():
-            break
-    # Proposal-E: escalate the token budget when the ANSWER is missing. The old check only caught an
-    # unclosed <think>; but plain verbose CoT (no tags) truncates the same way, so we also fire on a
-    # battery-specific probe that finds no extractable answer. One shot at a much larger budget.
-    need_more = any(open_tag in out and close_tag not in out for open_tag, close_tag in REASONING_TAGS) or \
-                (answer_probe is not None and not answer_probe(out))
+        out, timed_out, failed = _run_once(cmd)
+        if timed_out or out.strip() or not failed:
+            break                          # hang / got output / clean-empty -> stop; only a crash retries
+    if timed_out:
+        return out                         # never escalate a hang (#6)
+    # Escalate the token budget ONLY when there IS output but the answer was truncated (an unclosed
+    # reasoning tag, or a probe that finds no answer). An empty output is immediate-EOS, not a
+    # truncation, so a bigger budget can't help — don't pay for the extra run.
+    need_more = bool(out.strip()) and (
+        any(o in out and c not in out for o, c in REASONING_TAGS) or
+        (answer_probe is not None and not answer_probe(out)))
     if need_more:
-        bigger = _run_once(_build_cmd(prompt, n * REASONING_RETRY_MULT, temp))
-        if bigger.strip() and (answer_probe is None or answer_probe(bigger) or len(bigger) > len(out)):
+        bigger, t2, _ = _run_once(_build_cmd(prompt, n * REASONING_RETRY_MULT, temp))
+        # #43: with a probe, accept the escalation ONLY if it now yields an answer — a longer but
+        # still-answerless output isn't better and can newly trip the repetition-degeneracy flag.
+        # Without a probe, the completed output is legitimately the longer one.
+        accept = answer_probe(bigger) if answer_probe is not None else (len(bigger) > len(out))
+        if not t2 and bigger.strip() and accept:
             out = bigger
     return out
 
@@ -184,33 +199,50 @@ t0 = time.time()
 _MARK     = lambda o: any(re.search(p, runner._strip_think(o or ""), re.I) for p in runner._ANS_MARKERS)
 _has_code = lambda o: "```" in (o or "") or bool(re.search(r"\bdef\s+\w+\s*\(", runner._strip_think(o or "")))
 _has_call = lambda o: runner._extract_toolcall(o or "") is not None
-math_out   = [gen(_math_prompt(it), n=256, answer_probe=_MARK)  for it in math_items]
-code_out   = [gen(it["prompt"], n=512, answer_probe=_has_code)  for it in code_items]
-ifeval_out = [gen(it["prompt"], n=320)                           for it in ifeval_items]
-gsm8k_out  = [gen(_math_prompt(it), n=512, answer_probe=_MARK)  for it in gsm8k_items]
-tool_out   = [gen(_toolcall_prompt(it), n=220, answer_probe=_has_call) for it in tool_items]
+TIER0_GATE_FRAC = float(os.environ.get("CRUCIBLE_TIER0_GATE_FRAC", "0.5"))
 
-# Tier-0 degeneracy across ALL generated samples
-degens = []
-for o in math_out + code_out + ifeval_out + gsm8k_out + tool_out:
-    bad, reason = runner.is_degenerate(o)
-    if bad:
-        degens.append(reason)
+def _degen_reasons(outs):
+    rs = []
+    for o in outs:
+        bad, reason = runner.is_degenerate(o)
+        if bad:
+            rs.append(reason)
+    return rs
 
-math_pass = runner.grade_math(math_out, math_items)
-code_pass = runner.grade_code(code_out, code_items)
-ifeval_pass   = runner.grade_ifeval(ifeval_out, ifeval_items) if ifeval_items else None
-gsm8k_pass    = runner.grade_math(gsm8k_out, gsm8k_items) if gsm8k_items else None
-toolcall_pass = runner.grade_toolcall(tool_out, tool_items) if tool_items else None
-# v0.4 quality coordinate = agentic composite (tool-use + instruction-following + reasoning + code)
-agentic = runner.agentic_score({"toolcall": toolcall_pass, "ifeval": ifeval_pass,
-                                "gsm8k": gsm8k_pass, "code": code_pass})
+# CHEAP-GATE FIRST (finding #5): generate only the cheapest battery (math) and check degeneracy on
+# it. If the config is degenerate there, it is garbage — SKIP the rest of the expensive funnel
+# (code-exec grading, gsm8k/ifeval/toolcall generation) and emit agentic_score=None so the ledger
+# never ranks it. The old code generated AND graded all five batteries (grade_code even execs model
+# code) before ever consulting the free degeneracy signal.
+math_out = [gen(_math_prompt(it), n=256, answer_probe=_MARK) for it in math_items]
+math_degens = _degen_reasons(math_out)
+gated = bool(math_out) and (len(math_degens) / len(math_out)) >= TIER0_GATE_FRAC
+
+if gated:
+    code_out = ifeval_out = gsm8k_out = tool_out = []
+    degens = math_degens
+else:
+    code_out   = [gen(it["prompt"], n=512, answer_probe=_has_code)         for it in code_items]
+    ifeval_out = [gen(it["prompt"], n=320)                                 for it in ifeval_items]
+    gsm8k_out  = [gen(_math_prompt(it), n=512, answer_probe=_MARK)         for it in gsm8k_items]
+    tool_out   = [gen(_toolcall_prompt(it), n=220, answer_probe=_has_call) for it in tool_items]
+    degens = math_degens + _degen_reasons(code_out + ifeval_out + gsm8k_out + tool_out)
+
+math_pass     = runner.grade_math(math_out, math_items)
+code_pass     = None if gated else runner.grade_code(code_out, code_items)
+ifeval_pass   = None if (gated or not ifeval_items) else runner.grade_ifeval(ifeval_out, ifeval_items)
+gsm8k_pass    = None if (gated or not gsm8k_items)  else runner.grade_math(gsm8k_out, gsm8k_items)
+toolcall_pass = None if (gated or not tool_items)   else runner.grade_toolcall(tool_out, tool_items)
+# v0.4 quality coordinate = agentic composite; None when Tier-0-gated so it can never rank (#5)
+agentic = None if gated else runner.agentic_score({"toolcall": toolcall_pass, "ifeval": ifeval_pass,
+                                                   "gsm8k": gsm8k_pass, "code": code_pass})
 
 result = {
     "model": os.path.basename(MODEL),
     "threads": int(THREADS),
     "chat_template_applied": bool(TEMPLATE),
     "tier0_degenerate": bool(degens),
+    "tier0_gated": bool(gated),          # True -> funnel short-circuited on math degeneracy (#5)
     "tier0_reasons": degens,
     "math_pass": math_pass,
     "math_n": len(math_items),
