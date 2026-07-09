@@ -91,6 +91,25 @@ def cmd_status(box: str, d: dict) -> int:
 def cmd_stop(box: str, graceful: bool) -> int:
     workdir = os.path.join(box, "work")
     os.makedirs(workdir, exist_ok=True)
+    # No live driver? A STOP flag has nobody to consume it and would AMBUSH the next window —
+    # a fresh run_window.sh sees it on iteration 1, consolidates once, exits units=0 (finding
+    # #3). Instead mark the campaign stopped directly and leave no dangling flag.
+    if _driver_pid(box) is None:
+        path = os.path.join(box, "campaign.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                d = json.load(f)
+        except OSError as e:
+            print(f"window: no live driver and cannot read campaign.json ({e}).", file=sys.stderr)
+            return 2
+        if d.get("state") == "running":
+            d["state"] = "stopped"
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(d, f, indent=2)
+            print(f"window: no live driver — marked {box} state -> stopped (no STOP flag left behind).")
+        else:
+            print(f"window: no live driver and state is {d.get('state')!r}; nothing to stop.")
+        return 0
     open(os.path.join(workdir, "STOP"), "w").close()
     print(f"window: STOP flag set for {box}.")
     if graceful:
@@ -111,6 +130,7 @@ def cmd_add_hours(box: str, path: str, d: dict, hours: float, force: bool) -> in
     now = int(time.time())
     start = int(d.get("start_epoch") or 0)
     dl = int(d.get("deadline_epoch") or 0)
+    was_open_ended = (dl == 0)
     base = dl if dl else now           # open-ended window -> anchor the new deadline from now
     new_dl = int(base + hours * 3600)
     if not force:
@@ -123,6 +143,12 @@ def cmd_add_hours(box: str, path: str, d: dict, hours: float, force: bool) -> in
                   file=sys.stderr)
             return 2
     d["deadline_epoch"] = new_dl
+    if was_open_ended:
+        # Bounding a previously open-ended window (start_epoch was 0): we MUST set start=now,
+        # else run_window computes winddown = dl - (dl - 0)*frac, which lands ~decades in the
+        # past, so the loop winddowns instantly on the next iteration (finding #4).
+        d["start_epoch"] = now
+        start = now
     if start:
         d["duration_label"] = f"{round((new_dl - start) / 3600)}hr"   # keep the label truthful (run_window invariant)
     with open(path, "w", encoding="utf-8") as f:
