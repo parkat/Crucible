@@ -20,8 +20,12 @@ Usage:
     python3 scaffold/steer.py boxes/<nick> --list
 """
 from __future__ import annotations
-import argparse, os, re, sys
+import argparse, os, re, sys, tempfile
 from datetime import datetime
+try:
+    import fcntl                       # Unix orchestrator: advisory inter-process lock
+except ImportError:                    # Windows host: no fcntl -> the atomic replace still applies
+    fcntl = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -53,6 +57,50 @@ def _read(path: str) -> str:
         return ""
 
 
+def _atomic_write(path: str, content: str) -> None:
+    """Temp file + os.replace so a concurrent reader/writer never sees a torn STEERING.md (#30)."""
+    d = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".tmp-", suffix=".md")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
+
+
+class _FileLock:
+    """Advisory exclusive lock (sidecar .state.lock) so steer.py/queue.py/dashboard writers serialize
+    (finding #30). No-op on Windows (fcntl absent); the atomic write still prevents torn files."""
+    def __init__(self, target: str):
+        # in work/ (gitignored) so the lockfile never lands in the box repo
+        self.lockpath = os.path.join(os.path.dirname(os.path.abspath(target)) or ".", "work", ".state.lock")
+        self._fh = None
+    def __enter__(self):
+        if fcntl is not None:
+            os.makedirs(os.path.dirname(self.lockpath), exist_ok=True)
+            self._fh = open(self.lockpath, "w")
+            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+        return self
+    def __exit__(self, *exc):
+        if self._fh is not None:
+            try:
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+            finally:
+                self._fh.close()
+
+
+def _sanitize(s: str) -> str:
+    """Collapse interior whitespace/newlines and strip leading markdown markers, so a multi-line or
+    '-'/'#'-leading operator note can't forge a section header or a phantom extra bullet (finding
+    #29) that miscounts the inbox or leaves an un-retractable note."""
+    return re.sub(r"^[#>*\-\s]+", "", " ".join((s or "").split()))
+
+
 def _template() -> str:
     t = _read(TEMPLATE_PATH)
     return t if t.strip() else _FALLBACK_TEMPLATE
@@ -65,35 +113,37 @@ def ensure_file(path: str) -> None:
 
 
 def add_note(path: str, text: str, tag: str | None, research: bool, note: str | None) -> str:
-    ensure_file(path)
-    lines = _read(path).splitlines()
-    ts = datetime.now().isoformat(timespec="minutes")
-    bullet = f"- [{ts}] **{text.strip()}**"
-    if tag:
-        bullet += f" [{tag.upper()}]"
-    if research:
-        bullet += " (research)"
-    body = [bullet]
-    if note:
-        body += ["  " + note.strip()]
+    with _FileLock(path):
+        ensure_file(path)
+        lines = _read(path).splitlines()
+        ts = datetime.now().isoformat(timespec="minutes")
+        bullet = f"- [{ts}] **{_sanitize(text)}**"
+        if tag:
+            bullet += f" [{tag.upper()}]"
+        if research:
+            bullet += " (research)"
+        body = [bullet]
+        if note:
+            safe_note = _sanitize(note)
+            if safe_note:
+                body += ["  " + safe_note]
 
-    # find the Inbox header, then the first real content line under it (skip blanks/comments)
-    hdr = next((i for i, l in enumerate(lines) if INBOX_RE.match(l.strip())), None)
-    if hdr is None:  # no Inbox section — create one at the end
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines += ["## Inbox (unprocessed)", ""] + body + [""]
-    else:
-        j = hdr + 1
-        while j < len(lines) and (not lines[j].strip() or lines[j].lstrip().startswith("<!--")):
-            j += 1
-        ins = list(body)
-        if j >= len(lines) or ANY_H2_RE.match(lines[j]):  # inbox is empty -> pad before next section
-            ins = body + [""]
-        lines[j:j] = ins
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines).rstrip() + "\n")
-    return bullet
+        # find the Inbox header, then the first real content line under it (skip blanks/comments)
+        hdr = next((i for i, l in enumerate(lines) if INBOX_RE.match(l.strip())), None)
+        if hdr is None:  # no Inbox section — create one at the end
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines += ["## Inbox (unprocessed)", ""] + body + [""]
+        else:
+            j = hdr + 1
+            while j < len(lines) and (not lines[j].strip() or lines[j].lstrip().startswith("<!--")):
+                j += 1
+            ins = list(body)
+            if j >= len(lines) or ANY_H2_RE.match(lines[j]):  # inbox is empty -> pad before next section
+                ins = body + [""]
+            lines[j:j] = ins
+        _atomic_write(path, "\n".join(lines).rstrip() + "\n")
+        return bullet
 
 
 def list_inbox(path: str) -> list[str]:
@@ -113,27 +163,27 @@ def list_inbox(path: str) -> list[str]:
 
 def delete_note(path: str, n: int) -> str | None:
     """Retract the Nth Inbox note (1-based, matching --list order). Returns the removed text or None."""
-    lines = _read(path).splitlines()
-    hdr = next((i for i, l in enumerate(lines) if INBOX_RE.match(l.strip())), None)
-    if hdr is None:
-        return None
-    starts = []
-    for i in range(hdr + 1, len(lines)):
-        if ANY_H2_RE.match(lines[i]):
-            break
-        if re.match(r"^[-*]\s+", lines[i].strip()):
-            starts.append(i)
-    if n < 1 or n > len(starts):
-        return None
-    s = starts[n - 1]
-    e = s + 1
-    while e < len(lines) and not re.match(r"^[-*]\s+", lines[e].strip()) and not ANY_H2_RE.match(lines[e]):
-        e += 1
-    removed = "\n".join(lines[s:e]).strip()
-    del lines[s:e]
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines).rstrip() + "\n")
-    return removed
+    with _FileLock(path):
+        lines = _read(path).splitlines()
+        hdr = next((i for i, l in enumerate(lines) if INBOX_RE.match(l.strip())), None)
+        if hdr is None:
+            return None
+        starts = []
+        for i in range(hdr + 1, len(lines)):
+            if ANY_H2_RE.match(lines[i]):
+                break
+            if re.match(r"^[-*]\s+", lines[i].strip()):
+                starts.append(i)
+        if n < 1 or n > len(starts):
+            return None
+        s = starts[n - 1]
+        e = s + 1
+        while e < len(lines) and not re.match(r"^[-*]\s+", lines[e].strip()) and not ANY_H2_RE.match(lines[e]):
+            e += 1
+        removed = "\n".join(lines[s:e]).strip()
+        del lines[s:e]
+        _atomic_write(path, "\n".join(lines).rstrip() + "\n")
+        return removed
 
 
 def main() -> int:
@@ -155,7 +205,7 @@ def main() -> int:
         return 2
     path = os.path.join(box, "STEERING.md")
 
-    if a.delete:
+    if a.delete is not None:            # `is not None` so `--delete 0` isn't swallowed by 0's falsiness (#49)
         removed = delete_note(path, a.delete)
         if removed is None:
             print(f"steer: no inbox note {a.delete} to retract", file=sys.stderr)

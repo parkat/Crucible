@@ -30,8 +30,15 @@ case "$SUB" in
   start)
     JOBSPEC="${1:?remote_run start needs a remote command}"
     JOB="job_$(date +%s)"
+    # base64 the job command so ANY quoting inside it (single quotes, $( ), awk/sed scripts) survives
+    # the trip through the remote login shell AND the flock -c '...' wrapper (finding #13). The old
+    # code pasted $JOBSPEC verbatim between the single quotes of `flock -c '...'`, so one single quote
+    # in the command closed the -c string early: the job died with a syntax error, never wrote DONE,
+    # was misreported as "box busy", and a subsequent `wait` hung forever. The b64 blob is
+    # [A-Za-z0-9+/=] only, so it embeds safely; the remote decodes it and runs it via bash.
+    JOBSPEC_B64="$(printf '%s' "$JOBSPEC" | base64 | tr -d '\n')"
     # flock -n = single-tenant; if the box lock is held, fail fast rather than contend.
-    if $SSH "mkdir -p $RDIR/$JOB && flock -n '$LOCK' -c '{ $JOBSPEC ; echo DONE rc=\$? > $RDIR/$JOB/.done && mv -f $RDIR/$JOB/.done $RDIR/$JOB/DONE ; } > $RDIR/$JOB/out.log 2>&1 & echo \$! > $RDIR/$JOB/pid'"; then
+    if $SSH "mkdir -p $RDIR/$JOB && flock -n '$LOCK' -c '{ echo $JOBSPEC_B64 | base64 -d | bash ; echo DONE rc=\$? > $RDIR/$JOB/.done && mv -f $RDIR/$JOB/.done $RDIR/$JOB/DONE ; } > $RDIR/$JOB/out.log 2>&1 & echo \$! > $RDIR/$JOB/pid'"; then
       echo "$JOB"
     else
       echo "remote_run: box busy (lock held) or launch failed" >&2; exit 3
