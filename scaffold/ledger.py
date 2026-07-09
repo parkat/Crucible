@@ -15,7 +15,7 @@ CLI:
     python3 ledger.py record boxes/<nick>/ledger.jsonl --json '{...}'  # append one row (or stdin)
 """
 from __future__ import annotations
-import json, os, sys, time, uuid
+import json, math, os, sys, time, uuid
 try:
     import fcntl  # Unix (the target + the independent verifier run here, lock unchanged)
 except ImportError:  # Windows orchestrator host: no fcntl. Single-writer atomic append.
@@ -75,6 +75,27 @@ class Record:
     def validate(self) -> None:
         if self.status not in STATUS:
             raise ValueError(f"bad status {self.status!r}; must be one of {sorted(STATUS)}")
+        for fname in _NUMERIC_FIELDS:
+            v = getattr(self, fname)
+            if v is None:
+                continue
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise ValueError(f"field {fname!r} must be a number or null, "
+                                 f"got {type(v).__name__} {v!r}")
+            if not math.isfinite(v):
+                raise ValueError(f"field {fname!r} must be finite, got {v!r}")
+
+
+# Numeric fields feeding comparisons/objectives. A string or non-finite value here would
+# TypeError every downstream front/stats/dashboard read (finding #7); since the ledger is
+# append-only, one quoted number would brick reads for the rest of the campaign. Reject at
+# write time instead.
+_NUMERIC_FIELDS = (
+    "epoch", "decode_tok_s", "decode_tok_s_var", "prefill_tok_s", "ttft_s", "quality",
+    "perf_per_watt", "peak_rss_bytes", "roofline_ceiling_tok_s", "roofline_efficiency",
+    "accept_rate", "kld_vs_fp16", "bpb", "math_pass", "code_pass", "agentic_score",
+    "toolcall_pass", "ifeval_pass", "gsm8k_pass",
+)
 
 
 # ---- atomic append -----------------------------------------------------------
@@ -121,46 +142,59 @@ def load(ledger_path: str) -> list[dict]:
 # -bpb (lower bpb = better) whenever bpb is present. The raw `quality` scalar (in the optiplex5050
 # run it was 100/ppl) is NOT cross-model-comparable and is used only as a single-model fallback
 # when bpb is absent.
-_PERF = ("decode_tok_s", "prefill_tok_s")
+def _quality_coord(r: dict):
+    """Return (source, value) with 'higher = better', or None. The source TAG matters:
+    agentic_score (0..1), -bpb, and the legacy `quality` scalar (~1000 in old runs) are NOT
+    on a common scale, so _dominates only ever compares two records that share a source
+    (finding #8 — otherwise a legacy quality=1078 "dominates" an agentic=0.8 on the quality
+    axis and silently evicts every agentic/bpb contender from the front)."""
+    a = r.get("agentic_score")
+    if a is not None:
+        return ("agentic", a)            # already higher = better, 0..1
+    b = r.get("bpb")
+    if b is not None:
+        return ("bpb", -b)               # lower bpb is better -> negate
+    q = r.get("quality")
+    if q is not None:
+        return ("quality", q)            # single-model fallback only (NOT cross-model valid)
+    return None
 
-def _quality_coord(r: dict) -> Optional[float]:
-    # v0.4: the ranked quality coordinate is the AGENTIC composite (doctrine/01+02). It centers
-    # the front on agentically-useful configs (Cynosure targets an agent cluster). bpb/Elo remain
-    # RECORDED context and are the fallback ranker only when no agentic score is present (e.g. a
-    # legacy record or a config evaluated before the agentic tier ran).
-    agentic = r.get("agentic_score")
-    if agentic is not None:
-        return agentic                   # already "higher = better", 0..1
-    bpb = r.get("bpb")
-    if bpb is not None:
-        return -bpb                      # lower bpb is better -> negate so "higher = better"
-    return r.get("quality")              # single-model fallback only (NOT cross-model valid)
+def _perf_coords(r: dict) -> tuple:
+    return (r.get("decode_tok_s"), r.get("prefill_tok_s"))
 
-def _objs(r: dict) -> tuple:
-    return (r.get("decode_tok_s"), r.get("prefill_tok_s"), _quality_coord(r))
+def _num_ok(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 def _eligible(r: dict) -> bool:
     if r.get("status") in ("degenerate", "failed", "couldnt_load"):
         return False
-    return all(v is not None for v in _objs(r))
+    d, p = _perf_coords(r)
+    q = _quality_coord(r)
+    # A non-numeric/non-finite objective makes the record ineligible rather than letting it
+    # TypeError the whole front read (finding #7, read-side guard).
+    return _num_ok(d) and _num_ok(p) and q is not None and _num_ok(q[1])
 
 def _dominates(a: dict, b: dict) -> bool:
-    """a dominates b: >= on every objective and > on at least one (all maximized)."""
-    oa, ob = _objs(a), _objs(b)
+    """a dominates b: >= on every objective and > on at least one (all maximized). The
+    quality axis is comparable only when both records share a quality source; across sources
+    it is incomparable, so neither dominates and both stay on the front."""
+    da, pa = _perf_coords(a); db, pb = _perf_coords(b)
+    qa, qb = _quality_coord(a), _quality_coord(b)
+    if qa is None or qb is None or qa[0] != qb[0]:
+        return False
+    oa = (da, pa, qa[1]); ob = (db, pb, qb[1])
     ge = all(x >= y for x, y in zip(oa, ob))
     gt = any(x > y for x, y in zip(oa, ob))
     return ge and gt
 
 def pareto_front(records: list[dict]) -> list[dict]:
     pts = [r for r in records if _eligible(r)]
-    front = []
-    for r in pts:
-        if not any(_dominates(o, r) for o in pts if o is not r):
-            front.append(r)
-    # de-dup configs that tie on all objectives, keep the most recent
+    front = [r for r in pts if not any(_dominates(o, r) for o in pts if o is not r)]
+    # de-dup configs that tie on all objectives (within a source), keep the most recent
     best: dict[tuple, dict] = {}
     for r in front:
-        key = tuple(round(v, 6) for v in _objs(r))
+        d, p = _perf_coords(r); q = _quality_coord(r)
+        key = (round(d, 6), round(p, 6), q[0], round(q[1], 6))
         if key not in best or r["epoch"] > best[key]["epoch"]:
             best[key] = r
     return sorted(best.values(), key=lambda r: -r["decode_tok_s"])
