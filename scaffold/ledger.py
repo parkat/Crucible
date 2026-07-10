@@ -212,8 +212,11 @@ def _main(argv: list[str]) -> int:
             print(f"{r['id']}  dec={r['decode_tok_s']:.1f}  pre={r.get('prefill_tok_s')}  "
                   f"{ruler}  eff={r.get('roofline_efficiency')}  {r['config'].get('model','?')}")
     elif cmd == "tail":
-        n = int(argv[3]) if len(argv) > 3 else 10
-        for r in recs[-n:]:
+        try:
+            n = max(0, int(argv[3])) if len(argv) > 3 else 10   # clamp: n=0/neg no longer dumps the whole ledger (#58)
+        except ValueError:
+            n = 10
+        for r in (recs[-n:] if n else []):
             print(f"{r['id']}  [{r['status']}]  {r['config'].get('model','?')}  "
                   f"dec={r.get('decode_tok_s')}  {r.get('notes','')[:60]}")
     elif cmd == "stats":

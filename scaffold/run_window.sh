@@ -31,7 +31,7 @@ for a in "$@"; do
     --dry-run) DRY=1 ;;
     -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *[!0-9]*)  [ -z "$BOX" ] && BOX="${a%/}" || { echo "run_window: unexpected arg '$a'" >&2; exit 2; } ;;
-    *)         if [ -z "$BOX" ]; then BOX="${a%/}"; else HOURS="$a"; fi ;;
+    *)         if [ -z "$BOX" ]; then BOX="${a%/}"; elif [ -z "$HOURS" ]; then HOURS="$a"; else echo "run_window: unexpected extra arg '$a'" >&2; exit 2; fi ;;
   esac
 done
 [ -n "$BOX" ] || { echo "usage: run_window.sh boxes/<nick> [DURATION_HOURS] [--dry-run]" >&2; exit 2; }
@@ -51,7 +51,7 @@ NOW="$(date +%s)"
 # preview them, but only WRITE campaign.json on a real run.
 if [ -n "$HOURS" ]; then
   START="$NOW"
-  DEADLINE="$(( NOW + HOURS * 3600 ))"
+  DEADLINE="$(( NOW + 10#$HOURS * 3600 ))"     # 10# forces base-10 so HOURS=08/09 isn't invalid octal (#48)
   if [ "$DRY" -eq 0 ]; then
     python3 - "$BOX/campaign.json" "$START" "$DEADLINE" "$HOURS" <<'PY'
 import json, sys
@@ -338,8 +338,27 @@ try:
     head = open(os.path.join(box, "MEMORY.md"), encoding="utf-8", errors="ignore").read()
 except OSError:
     print(sonnet); raise SystemExit
-m = re.search(r"###\s*TAKEABLE NOW.*?(\[BOX\]|\[HOST\]|\[EITHER\])", head, re.S | re.I)
-if (m.group(1).upper() if m else "[HOST]") != "[BOX]":
+# Route on the takeable queue top's resource tag. The queue lives under a '### Queue' / '### Open
+# hypotheses' header; the FIRST non-closed item's [BOX]/[HOST]/[EITHER] tag decides. The old regex
+# looked for a literal '### TAKEABLE NOW' header the format never emits, so it always fell through to
+# [HOST]->Sonnet, silently downgrading EVERY [BOX] bench off Opus (finding #34).
+tag = "[HOST]"
+lines = head.splitlines()
+hdr = next((i for i, l in enumerate(lines)
+            if re.match(r"^#{2,3}\s+(Queue|Open hypotheses)\b", l.strip(), re.I)), None)
+if hdr is not None:
+    for l in lines[hdr + 1:]:
+        if re.match(r"^#{1,3}\s+", l):                                  # next section -> stop
+            break
+        if not re.match(r"^\s*(\d+[.)]\s+|[-*]\s+|\*\*\s*→)", l):       # not an item line
+            continue
+        if re.search(r"\b(CLOSED|DONE|NO-GO|REFUTED|RETRACTED)\b", l):  # skip closed items
+            continue
+        mm = re.search(r"(\[BOX\]|\[HOST\]|\[EITHER\])", l, re.I)
+        if mm:
+            tag = mm.group(1).upper()
+        break                                                          # first non-closed item decides
+if tag != "[BOX]":
     print(sonnet); raise SystemExit           # not a [BOX] bench -> Sonnet
 # a [BOX] bench earns Opus only if the box is actually idle; probe best-effort, fail -> sonnet.
 idle = False

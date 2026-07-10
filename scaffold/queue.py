@@ -111,6 +111,8 @@ def peek(md_path: str) -> list[str]:
         if ANY_HDR.match(l):
             break
         if ITEM.match(l):
+            if re.search(r"\b(CLOSED|DONE|NO-GO|REFUTED|RETRACTED)\b", l):
+                continue                       # a finished item isn't the takeable top (finding #57)
             out.append(re.sub(r"[*`]", "", l.strip())[:140])
     return out
 

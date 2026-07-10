@@ -16,11 +16,15 @@ mem=$(free -m 2>/dev/null | awk '/^Mem:/{printf "\"total\":%s,\"used\":%s,\"free
 
 disk=$(df -h 2>/dev/null | awk 'NR>1 && $6 ~ /^\/($|home|mnt|data|dev\/|crucible)/ {printf "%s{\"mount\":\"%s\",\"size\":\"%s\",\"used\":\"%s\",\"avail\":\"%s\",\"pct\":\"%s\"}",(c++?",":""),$6,$2,$3,$4,$5}')
 
-cpu_temp=$(sensors 2>/dev/null | awk '/Package id 0:|Tctl:|CPU Temp/{gsub(/[+°C]/,"",$NF); print $NF; exit}')
+# extract the FIRST +NN.N temperature token on the label line (the package temp), NOT $NF — which
+# was the crit value and carried a trailing ')' -> "temp_c":100.0) invalid JSON, blanking the whole
+# hardware panel on common Intel configs (finding #19).
+cpu_temp=$(sensors 2>/dev/null | awk '/Package id 0:|Tctl:|CPU Temp/{if(match($0,/\+[0-9]+(\.[0-9]+)?/)){print substr($0,RSTART+1,RLENGTH-1); exit}}')
 [ -z "$cpu_temp" ] && cpu_temp=$(awk '{printf "%.1f",$1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
 [ -z "$cpu_temp" ] && cpu_temp=null
 
-gpu=$(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | awk -F', ' 'NF>=4{printf "\"util\":%s,\"mem_used\":%s,\"mem_total\":%s,\"temp\":%s",$1,$2,$3,$4}')
+# coerce any non-numeric field ([N/A] on some GPUs) to null so the JSON stays valid (finding #19).
+gpu=$(nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | awk -F', ' 'NF>=4{for(i=1;i<=4;i++){if($i !~ /^[0-9]+(\.[0-9]+)?$/)$i="null"}printf "\"util\":%s,\"mem_used\":%s,\"mem_total\":%s,\"temp\":%s",$1,$2,$3,$4}')
 [ -z "$gpu" ] && gpu='"util":null,"mem_used":null,"mem_total":null,"temp":null'
 
 cat <<JSON
