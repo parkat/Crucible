@@ -170,9 +170,14 @@ def _eligible(r: dict) -> bool:
         return False
     d, p = _perf_coords(r)
     q = _quality_coord(r)
-    # A non-numeric/non-finite objective makes the record ineligible rather than letting it
-    # TypeError the whole front read (finding #7, read-side guard).
-    return _num_ok(d) and _num_ok(p) and q is not None and _num_ok(q[1])
+    # v0.5 policy (operator 2026-07-10): rank the front ONLY on agentic_score. Legacy records whose
+    # only quality signal is bpb or the pre-agentic `quality` scalar are DEMOTED to context —
+    # recorded in the ledger, but not front-eligible (so they can't sit on the front un-comparable to
+    # the agentic contenders). bpb/quality remain on the record for reference.
+    # (A non-numeric/non-finite objective is also excluded, so one corrupt line can't TypeError the
+    # whole front read — finding #7 read-side guard.)
+    return (_num_ok(d) and _num_ok(p)
+            and q is not None and q[0] == "agentic" and _num_ok(q[1]))
 
 def _dominates(a: dict, b: dict) -> bool:
     """a dominates b: >= on every objective and > on at least one (all maximized). The
