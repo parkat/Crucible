@@ -192,8 +192,21 @@ def _dominates(a: dict, b: dict) -> bool:
     gt = any(x > y for x, y in zip(oa, ob))
     return ge and gt
 
+def _config_identity(r: dict) -> tuple:
+    c = r.get("config") or {}
+    return (c.get("model"), c.get("quant"))
+
 def pareto_front(records: list[dict]) -> list[dict]:
     pts = [r for r in records if _eligible(r)]
+    # SUPERSEDE (v0.5): for the same config identity (model, quant), keep only the most recent
+    # measurement. A fresh re-eval retires an older/stale-hardware row of the same config, so a
+    # phantom point (e.g. Qwen0.5B on dead GTX-1060 numbers) can't linger beside its honest re-bench.
+    latest: dict[tuple, dict] = {}
+    for r in pts:
+        k = _config_identity(r)
+        if k not in latest or (r.get("epoch") or 0) > (latest[k].get("epoch") or 0):
+            latest[k] = r
+    pts = list(latest.values())
     front = [r for r in pts if not any(_dominates(o, r) for o in pts if o is not r)]
     # de-dup configs that tie on all objectives (within a source), keep the most recent
     best: dict[tuple, dict] = {}
