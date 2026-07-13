@@ -25,6 +25,8 @@ import runner
 COMP, MODEL, ASSETS, RUNNER_DIR = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 THREADS = sys.argv[5] if len(sys.argv) > 5 else "2"
 NGL = os.environ.get("CRUCIBLE_NGL")  # set to "99" for GPU; unset = CPU
+EVAL_MAX_S = float(os.environ.get("CRUCIBLE_EVAL_MAX_S", "5400"))  # per-model wall-clock cap (~90m default)
+_EVAL_DEADLINE = None  # set to t0+EVAL_MAX_S once generation starts; bounds every _run_once + gates batteries
 
 
 def has_chat_template(model_path, scan_bytes=32 * 1024 * 1024):
@@ -105,8 +107,12 @@ def _run_once(cmd):
     #   timed_out -> the config's real, bad behavior; never retry or escalate a hang;
     #   failed    -> a process CRASH (nonzero rc / spawn error); a fresh process may recover -> retry;
     #   clean ""  -> deterministic immediate-EOS; a re-run gives the same nothing -> don't retry.
+    # bound each generation so it can't run past the per-model wall-clock cap: a single slow model
+    # (reasoning CoT on a VRAM-bound card) otherwise held the box lock 2.5h+. Once the deadline is
+    # near, `to` shrinks so remaining prompts time out fast and the eval terminates near the cap.
+    to = 900 if _EVAL_DEADLINE is None else max(2, min(900, int(_EVAL_DEADLINE - time.time())))
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=900,
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=to,
                            stdin=subprocess.DEVNULL, errors="replace")
     except subprocess.TimeoutExpired:
         return "", True, False
@@ -192,6 +198,7 @@ gsm8k_items  = load_jsonl_opt(os.path.join(ASSETS, "gsm8k.jsonl"))
 tool_items   = load_jsonl_opt(os.path.join(ASSETS, "toolcall.jsonl"))
 
 t0 = time.time()
+_EVAL_DEADLINE = t0 + EVAL_MAX_S       # bounds every _run_once (above) and gates the batteries below
 # Proposal-E: bigger budgets on the reasoning-heavy batteries + a per-battery answer probe that
 # escalates when the final answer didn't fit. For math/gsm8k the probe is the ANSWER MARKER (not "any
 # number") — a truncated CoT still contains intermediate numbers, so only the marker's absence reliably
@@ -209,6 +216,9 @@ def _degen_reasons(outs):
             rs.append(reason)
     return rs
 
+def _over_deadline():
+    return time.time() > _EVAL_DEADLINE
+
 # CHEAP-GATE FIRST (finding #5): generate only the cheapest battery (math) and check degeneracy on
 # it. If the config is degenerate there, it is garbage — SKIP the rest of the expensive funnel
 # (code-exec grading, gsm8k/ifeval/toolcall generation) and emit agentic_score=None so the ledger
@@ -218,24 +228,39 @@ math_out = [gen(_math_prompt(it), n=256, answer_probe=_MARK) for it in math_item
 math_degens = _degen_reasons(math_out)
 gated = bool(math_out) and (len(math_degens) / len(math_out)) >= TIER0_GATE_FRAC
 
-if gated:
-    code_out = ifeval_out = gsm8k_out = tool_out = []
-    degens = math_degens
-else:
-    code_out   = [gen(it["prompt"], n=512, answer_probe=_has_code)         for it in code_items]
-    ifeval_out = [gen(it["prompt"], n=320)                                 for it in ifeval_items]
-    gsm8k_out  = [gen(_math_prompt(it), n=512, answer_probe=_MARK)         for it in gsm8k_items]
-    tool_out   = [gen(_toolcall_prompt(it), n=220, answer_probe=_has_call) for it in tool_items]
-    degens = math_degens + _degen_reasons(code_out + ifeval_out + gsm8k_out + tool_out)
+# Per-model wall-clock cap: check the deadline BEFORE each expensive battery; if exceeded, skip the
+# rest and emit agentic_score=None (a partial eval must not rank). Stops one slow model — e.g. a
+# reasoning model on a VRAM-bound card — from holding the box lock for hours.
+eval_timed_out = False
+code_out = ifeval_out = gsm8k_out = tool_out = []
+if not gated:
+    _batteries = [
+        ("code",   lambda: [gen(it["prompt"], n=512, answer_probe=_has_code)         for it in code_items]),
+        ("ifeval", lambda: [gen(it["prompt"], n=320)                                 for it in ifeval_items]),
+        ("gsm8k",  lambda: [gen(_math_prompt(it), n=512, answer_probe=_MARK)         for it in gsm8k_items]),
+        ("tool",   lambda: [gen(_toolcall_prompt(it), n=220, answer_probe=_has_call) for it in tool_items]),
+    ]
+    _outs = {}
+    for _name, _run in _batteries:
+        if _over_deadline():
+            eval_timed_out = True
+            break
+        _outs[_name] = _run()
+    code_out, ifeval_out = _outs.get("code", []), _outs.get("ifeval", [])
+    gsm8k_out, tool_out = _outs.get("gsm8k", []), _outs.get("tool", [])
+    eval_timed_out = eval_timed_out or _over_deadline()
+degens = math_degens + _degen_reasons(code_out + ifeval_out + gsm8k_out + tool_out)
 
+_incomplete = gated or eval_timed_out          # a gated OR timed-out eval must not produce a ranked score
 math_pass     = runner.grade_math(math_out, math_items)
-code_pass     = None if gated else runner.grade_code(code_out, code_items)
-ifeval_pass   = None if (gated or not ifeval_items) else runner.grade_ifeval(ifeval_out, ifeval_items)
-gsm8k_pass    = None if (gated or not gsm8k_items)  else runner.grade_math(gsm8k_out, gsm8k_items)
-toolcall_pass = None if (gated or not tool_items)   else runner.grade_toolcall(tool_out, tool_items)
-# v0.4 quality coordinate = agentic composite; None when Tier-0-gated so it can never rank (#5)
-agentic = None if gated else runner.agentic_score({"toolcall": toolcall_pass, "ifeval": ifeval_pass,
-                                                   "gsm8k": gsm8k_pass, "code": code_pass})
+code_pass     = None if _incomplete else runner.grade_code(code_out, code_items)
+ifeval_pass   = None if (_incomplete or not ifeval_items) else runner.grade_ifeval(ifeval_out, ifeval_items)
+gsm8k_pass    = None if (_incomplete or not gsm8k_items)  else runner.grade_math(gsm8k_out, gsm8k_items)
+toolcall_pass = None if (_incomplete or not tool_items)   else runner.grade_toolcall(tool_out, tool_items)
+# v0.4 quality coordinate = agentic composite; None when gated OR timed out so a partial/garbage eval
+# can never rank (#5 + wall-clock cap)
+agentic = None if _incomplete else runner.agentic_score({"toolcall": toolcall_pass, "ifeval": ifeval_pass,
+                                                         "gsm8k": gsm8k_pass, "code": code_pass})
 
 result = {
     "model": os.path.basename(MODEL),
@@ -243,6 +268,7 @@ result = {
     "chat_template_applied": bool(TEMPLATE),
     "tier0_degenerate": bool(degens),
     "tier0_gated": bool(gated),          # True -> funnel short-circuited on math degeneracy (#5)
+    "eval_timed_out": bool(eval_timed_out),  # True -> hit CRUCIBLE_EVAL_MAX_S; agentic_score is None
     "tier0_reasons": degens,
     "math_pass": math_pass,
     "math_n": len(math_items),

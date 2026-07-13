@@ -21,13 +21,31 @@ work/STOP + a kill of work/current_unit.pid. It NEVER touches MEMORY / the ledge
 The report is still written on stop because the loop breaks into its normal consolidate step.
 """
 from __future__ import annotations
-import argparse, json, os, signal, subprocess, sys, time
+import argparse, json, os, signal, subprocess, sys, tempfile, time
 
 
 def _load(box: str):
     p = os.path.join(box, "campaign.json")
     with open(p, encoding="utf-8") as f:
         return p, json.load(f)
+
+
+def _write_json_atomic(path: str, d: dict) -> None:
+    """tmp + os.replace so a crash mid-write can't leave a torn campaign.json (finding #45).
+    run_window now HARD-FAILS on an unparseable campaign.json (batch-3 #27), so a torn write would
+    otherwise brick the next start."""
+    dirn = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(dir=dirn, prefix=".campaign-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(d, f, indent=2)
+        os.replace(tmp, path)
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def _fmt_dur(secs: float) -> str:
@@ -104,8 +122,7 @@ def cmd_stop(box: str, graceful: bool) -> int:
             return 2
         if d.get("state") == "running":
             d["state"] = "stopped"
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(d, f, indent=2)
+            _write_json_atomic(path, d)
             print(f"window: no live driver — marked {box} state -> stopped (no STOP flag left behind).")
         else:
             print(f"window: no live driver and state is {d.get('state')!r}; nothing to stop.")
@@ -151,8 +168,7 @@ def cmd_add_hours(box: str, path: str, d: dict, hours: float, force: bool) -> in
         start = now
     if start:
         d["duration_label"] = f"{round((new_dl - start) / 3600)}hr"   # keep the label truthful (run_window invariant)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(d, f, indent=2)
+    _write_json_atomic(path, d)
     verb = "extended" if hours >= 0 else "shortened"
     print(f"window: {verb} {box} by {abs(hours)}h -> deadline_epoch={new_dl} "
           f"({_fmt_dur(new_dl - now)} from now); duration_label={d.get('duration_label')}.")
@@ -203,8 +219,7 @@ def cmd_hard_kill(box: str, path: str, d: dict) -> int:
         except OSError:
             pass
     d["state"] = "killed"
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(d, fh, indent=2)
+    _write_json_atomic(path, d)
     print(f"window: HARD KILL — terminated {', '.join(killed) if killed else 'nothing (no live processes found)'}.")
     print("window: NO consolidate/report ran; state -> killed. Re-arm with run_window.sh to restart.")
     return 0

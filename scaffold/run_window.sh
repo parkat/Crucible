@@ -315,6 +315,15 @@ _interruptible_sleep() {  # $1 = seconds
   done
 }
 
+# transcript hygiene (finding #47): the per-unit stream-json transcripts grow unbounded (measured
+# ~400MB / 1300+ files over ~9 days) and eventually fill a constrained box's disk, wedging the loop.
+# Keep the most recent CRUCIBLE_KEEP_TRANSCRIPTS and prune older ones, once per unit.
+KEEP_TRANSCRIPTS="${CRUCIBLE_KEEP_TRANSCRIPTS:-200}"
+prune_transcripts() {
+  ls -1t "$LOGDIR"/unit_*.jsonl "$LOGDIR"/consolidate_*.jsonl 2>/dev/null \
+    | tail -n +"$(( KEEP_TRANSCRIPTS + 1 ))" | xargs -r rm -f 2>/dev/null || true
+}
+
 # Units run with --output-format stream-json --verbose so the dashboard can render the
 # live transcript (thinking + each tool/SSH command + results) as the unit runs. Output is
 # JSONL that grows in real time; the final {"type":"result"} line carries the same summary
@@ -443,6 +452,9 @@ echo "$$" > "$BOX/work/driver.pid"   # so window.py hard-kill can find the drive
 # clear STALE control flags left by a previous (now-dead) driver: a lingering STOP would
 # instantly no-op this fresh window (units=0), a lingering PAUSE would hang it (finding #3).
 rm -f "$STOP_FLAG" "$BOX/work/PAUSE"
+# on driver death (TERM/INT/HUP), don't orphan the in-flight unit + its SSH box-bench that holds the
+# box flock: kill the unit tree and clean the pidfiles before exiting (finding #46).
+trap '[ -n "${UNIT_PID:-}" ] && { pkill -TERM -P "$UNIT_PID" 2>/dev/null; kill "$UNIT_PID" 2>/dev/null; }; rm -f "$CURPID_FILE" "$BOX/work/driver.pid"; exit 143' TERM INT HUP
 echo "run_window: $(date -Is) START box=$BOX winddown=$WINDDOWN deadline=$DEADLINE" >> "$LOG"
 
 UNIT=0
@@ -506,6 +518,7 @@ while : ; do
     render "$UNIT_PROMPT" | run_unit "$MODEL" \
       || echo "run_window: $(date -Is) unit #$UNIT exited non-zero (logged; continuing)" | tee -a "$LOG"
   fi
+  prune_transcripts   # cap the transcript dir so it can't fill the disk over a long window (#47)
   # session-limit backoff: if this unit was a limit no-op, drop it (don't count it) and sleep
   # until the reset instead of tight-relaunching against the cap.
   SLEEP="$(limit_sleep_secs "$UNIT_FILE")"
@@ -555,7 +568,9 @@ else
     || echo "run_window: $(date -Is) consolidate exited non-zero (logged)" | tee -a "$LOG"
   FINAL_STATE="completed"; [ "${STOP_REQUESTED:-0}" -eq 1 ] && FINAL_STATE="stopped"
 fi
-python3 -c "import json;p='$BOX/campaign.json';d=json.load(open(p));d['state']='$FINAL_STATE';json.dump(d,open(p,'w'),indent=2)"
+# atomic write (tmp+os.replace) so a crash here can't leave a torn campaign.json that the next
+# start hard-fails on (findings #45 + #27).
+python3 -c "import json,os,tempfile;p='$BOX/campaign.json';d=json.load(open(p));d['state']='$FINAL_STATE';fd,t=tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(p)) or '.',prefix='.campaign-',suffix='.json');f=os.fdopen(fd,'w');json.dump(d,f,indent=2);f.close();os.replace(t,p)"
 rm -f "$SENTINEL" "$CURPID_FILE" "$STOP_FLAG" "$BOX/work/driver.pid" "$BOX/work/PAUSE"
 # render the just-sealed FINAL_*.md report(s) to PDF so the dashboard panel is ready immediately
 python3 scaffold/dashboard/report_pdf.py "$BOX" >/dev/null 2>&1 || true
