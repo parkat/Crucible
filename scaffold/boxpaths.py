@@ -50,6 +50,15 @@ def _load_json(box: str, name: str, required: bool = True) -> dict:
     return {}
 
 
+def _reject_fragile(p: str, field: str) -> None:
+    """A remote path used inside a single-quoted remote context (e.g. flock -c '...') must be
+    ABSOLUTE: a leading '~' or a '$VAR' survives literally and breaks (finding #40 — a
+    '~/crucible' lock path failed the box flock in production). Fail loud with a fix hint."""
+    if p.startswith("~") or "$" in p:
+        _die(f"connection.json {field}={p!r} must be an ABSOLUTE remote path — a '~' or '$VAR' "
+             f"breaks under single-quoting (e.g. flock -c). Use e.g. /home/<user>/crucible.")
+
+
 def _ssh_prefix(conn: dict) -> str:
     """The SSH invocation prefix; callers append the remote command."""
     key = conn.get("ssh_key_path")
@@ -62,7 +71,11 @@ def _ssh_prefix(conn: dict) -> str:
         parts += ["-i", key]
     opts = conn.get("ssh_opts", "")
     if opts:
-        parts.append(opts)               # e.g. "-o IdentitiesOnly=yes" (kept verbatim)
+        parts.append(opts)               # e.g. "-o IdentitiesOnly=yes" (kept verbatim; ssh_opts wins ties)
+    # unattended-run hardening (finding #32): fail fast on a down/asleep box (ConnectTimeout) and drop
+    # a dead connection (ServerAlive) instead of hanging a unit ~75s, and never block on a passphrase
+    # prompt (BatchMode). ssh uses the FIRST value seen, so ssh_opts above still overrides any of these.
+    parts.append("-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3")
     parts.append(f"{user}@{host}")
     return " ".join(parts)
 
@@ -84,6 +97,7 @@ def _build_dir(conn: dict, hw: dict, cpu: bool) -> str:
     engine = conn.get("remote_engine_dir")
     if not engine:
         _die("connection.json needs remote_engine_dir")
+    _reject_fragile(engine, "remote_engine_dir")
     gpu = hw.get("gpu", {}) or {}
     if not cpu and gpu.get("present"):
         tag = _cuda_tag(gpu)
@@ -98,6 +112,7 @@ def _lock_path(conn: dict) -> str:
     root = conn.get("remote_root")
     if not root:
         _die("connection.json needs remote_root")
+    _reject_fragile(root, "remote_root")
     return f"{root}/work/.box.lock"
 
 

@@ -31,7 +31,7 @@ for a in "$@"; do
     --dry-run) DRY=1 ;;
     -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *[!0-9]*)  [ -z "$BOX" ] && BOX="${a%/}" || { echo "run_window: unexpected arg '$a'" >&2; exit 2; } ;;
-    *)         if [ -z "$BOX" ]; then BOX="${a%/}"; else HOURS="$a"; fi ;;
+    *)         if [ -z "$BOX" ]; then BOX="${a%/}"; elif [ -z "$HOURS" ]; then HOURS="$a"; else echo "run_window: unexpected extra arg '$a'" >&2; exit 2; fi ;;
   esac
 done
 [ -n "$BOX" ] || { echo "usage: run_window.sh boxes/<nick> [DURATION_HOURS] [--dry-run]" >&2; exit 2; }
@@ -51,7 +51,7 @@ NOW="$(date +%s)"
 # preview them, but only WRITE campaign.json on a real run.
 if [ -n "$HOURS" ]; then
   START="$NOW"
-  DEADLINE="$(( NOW + HOURS * 3600 ))"
+  DEADLINE="$(( NOW + 10#$HOURS * 3600 ))"     # 10# forces base-10 so HOURS=08/09 isn't invalid octal (#48)
   if [ "$DRY" -eq 0 ]; then
     python3 - "$BOX/campaign.json" "$START" "$DEADLINE" "$HOURS" <<'PY'
 import json, sys
@@ -70,7 +70,13 @@ PY
 fi
 
 # ---- read the window ----------------------------------------------------------
-read -r DISK_START DISK_DEADLINE MARGIN FRONT_STALL_K < <(python3 -c "import json;d=json.load(open('$BOX/campaign.json'));print(d.get('start_epoch') or 0, d.get('deadline_epoch') or 0, d.get('winddown_margin_frac') if d.get('winddown_margin_frac') is not None else 0.10, d.get('front_stall_K') or 0)")
+read -r DISK_START DISK_DEADLINE MARGIN FRONT_STALL_K < <(python3 -c "import json;d=json.load(open('$BOX/campaign.json'));print(d.get('start_epoch') or 0, d.get('deadline_epoch') or 0, d.get('winddown_margin_frac') if d.get('winddown_margin_frac') is not None else 0.10, d.get('front_stall_K') or 0)" 2>/dev/null || echo "ERR")
+# A torn/corrupt campaign.json must NOT silently degrade to an open-ended window that never
+# consolidates (finding #27) — the unguarded read used to leave DEADLINE empty -> WINDDOWN=0.
+if [ "${DISK_START:-ERR}" = "ERR" ] || [ -z "${DISK_START:-}" ]; then
+  echo "run_window: cannot parse $BOX/campaign.json (torn/corrupt?) — refusing to start" >&2
+  exit 5
+fi
 # A real re-arm already wrote these (disk == computed). A --dry-run re-arm deliberately did NOT
 # write (bug D), so keep the computed would-be epochs from the re-arm block for the preview.
 if [ "$DRY" -eq 1 ] && [ -n "$HOURS" ]; then
@@ -271,6 +277,53 @@ except Exception:
 PY
 }
 
+# ---- non-limit failure detection + interruptible backoff -----------------------
+# unit_is_error: exit 0 (true) if the unit crashed or its result line is is_error — a NON-limit
+# failure (auth expiry, bad model id, API 5xx). Lets the loop tell "unit did work" from "unit
+# failed" so a persistent instant-failure backs off instead of tight-spinning (finding #1), and
+# a crashed research/pivot unit is retried, not misread as "campaign exhausted" (finding #2).
+unit_is_error() {  # $1 = unit output file
+  python3 - "$1" <<'PY'
+import sys, json
+last = None
+try:
+    for ln in open(sys.argv[1], encoding="utf-8", errors="ignore"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try: o = json.loads(ln)
+        except Exception: continue
+        if o.get("type") == "result":
+            last = o
+except OSError:
+    pass
+# error if there is no result line at all (crash/empty) OR it is flagged is_error
+raise SystemExit(0 if (last is None or last.get("is_error")) else 1)
+PY
+}
+
+# _interruptible_sleep: sleep up to $1 seconds but wake early on a STOP flag or a passed deadline,
+# so a long backoff never ignores operator control for hours (finding #24).
+_interruptible_sleep() {  # $1 = seconds
+  local remain="${1:-0}" step dl
+  while [ "$remain" -gt 0 ]; do
+    [ -f "$STOP_FLAG" ] && return 0
+    dl="$(python3 -c "import json;print(json.load(open('$BOX/campaign.json')).get('deadline_epoch') or 0)" 2>/dev/null || echo 0)"
+    [ "${dl:-0}" -ne 0 ] && [ "$(date +%s)" -ge "$dl" ] && return 0
+    step=10; [ "$remain" -lt 10 ] && step="$remain"
+    sleep "$step"; remain=$(( remain - step ))
+  done
+}
+
+# transcript hygiene (finding #47): the per-unit stream-json transcripts grow unbounded (measured
+# ~400MB / 1300+ files over ~9 days) and eventually fill a constrained box's disk, wedging the loop.
+# Keep the most recent CRUCIBLE_KEEP_TRANSCRIPTS and prune older ones, once per unit.
+KEEP_TRANSCRIPTS="${CRUCIBLE_KEEP_TRANSCRIPTS:-200}"
+prune_transcripts() {
+  ls -1t "$LOGDIR"/unit_*.jsonl "$LOGDIR"/consolidate_*.jsonl 2>/dev/null \
+    | tail -n +"$(( KEEP_TRANSCRIPTS + 1 ))" | xargs -r rm -f 2>/dev/null || true
+}
+
 # Units run with --output-format stream-json --verbose so the dashboard can render the
 # live transcript (thinking + each tool/SSH command + results) as the unit runs. Output is
 # JSONL that grows in real time; the final {"type":"result"} line carries the same summary
@@ -294,8 +347,27 @@ try:
     head = open(os.path.join(box, "MEMORY.md"), encoding="utf-8", errors="ignore").read()
 except OSError:
     print(sonnet); raise SystemExit
-m = re.search(r"###\s*TAKEABLE NOW.*?(\[BOX\]|\[HOST\]|\[EITHER\])", head, re.S | re.I)
-if (m.group(1).upper() if m else "[HOST]") != "[BOX]":
+# Route on the takeable queue top's resource tag. The queue lives under a '### Queue' / '### Open
+# hypotheses' header; the FIRST non-closed item's [BOX]/[HOST]/[EITHER] tag decides. The old regex
+# looked for a literal '### TAKEABLE NOW' header the format never emits, so it always fell through to
+# [HOST]->Sonnet, silently downgrading EVERY [BOX] bench off Opus (finding #34).
+tag = "[HOST]"
+lines = head.splitlines()
+hdr = next((i for i, l in enumerate(lines)
+            if re.match(r"^#{2,3}\s+(Queue|Open hypotheses)\b", l.strip(), re.I)), None)
+if hdr is not None:
+    for l in lines[hdr + 1:]:
+        if re.match(r"^#{1,3}\s+", l):                                  # next section -> stop
+            break
+        if not re.match(r"^\s*(\d+[.)]\s+|[-*]\s+|\*\*\s*→)", l):       # not an item line
+            continue
+        if re.search(r"\b(CLOSED|DONE|NO-GO|REFUTED|RETRACTED)\b", l):  # skip closed items
+            continue
+        mm = re.search(r"(\[BOX\]|\[HOST\]|\[EITHER\])", l, re.I)
+        if mm:
+            tag = mm.group(1).upper()
+        break                                                          # first non-closed item decides
+if tag != "[BOX]":
     print(sonnet); raise SystemExit           # not a [BOX] bench -> Sonnet
 # a [BOX] bench earns Opus only if the box is actually idle; probe best-effort, fail -> sonnet.
 idle = False
@@ -365,10 +437,30 @@ fi
 # ---- the loop -----------------------------------------------------------------
 command -v claude >/dev/null 2>&1 || { echo "run_window: 'claude' CLI not on PATH" >&2; exit 1; }
 mkdir -p "$LOGDIR"
+# refuse to start a SECOND driver on the same box (two loops would race the queue/ledger/box
+# lock and duplicate multi-minute benches, finding #25). A stale pidfile — dead PID, or a reused
+# PID that isn't a run_window process — is ignored.
+if [ -f "$BOX/work/driver.pid" ]; then
+  OLD_PID="$(cat "$BOX/work/driver.pid" 2>/dev/null || echo "")"
+  if [ -n "$OLD_PID" ] && [ "$OLD_PID" != "$$" ] && kill -0 "$OLD_PID" 2>/dev/null \
+     && grep -qa run_window "/proc/$OLD_PID/cmdline" 2>/dev/null; then
+    echo "run_window: a live driver (pid $OLD_PID) already owns $BOX — refusing to start a second loop" >&2
+    exit 4
+  fi
+fi
 echo "$$" > "$BOX/work/driver.pid"   # so window.py hard-kill can find the driver
+# clear STALE control flags left by a previous (now-dead) driver: a lingering STOP would
+# instantly no-op this fresh window (units=0), a lingering PAUSE would hang it (finding #3).
+rm -f "$STOP_FLAG" "$BOX/work/PAUSE"
+# on driver death (TERM/INT/HUP), don't orphan the in-flight unit + its SSH box-bench that holds the
+# box flock: kill the unit tree and clean the pidfiles before exiting (finding #46).
+trap '[ -n "${UNIT_PID:-}" ] && { pkill -TERM -P "$UNIT_PID" 2>/dev/null; kill "$UNIT_PID" 2>/dev/null; }; rm -f "$CURPID_FILE" "$BOX/work/driver.pid"; exit 143' TERM INT HUP
 echo "run_window: $(date -Is) START box=$BOX winddown=$WINDDOWN deadline=$DEADLINE" >> "$LOG"
 
 UNIT=0
+FAIL_STREAK=0
+REPEATED_FAILURE=0
+MAX_FAIL_STREAK="${CRUCIBLE_MAX_FAIL_STREAK:-6}"
 while : ; do
   NOW="$(date +%s)"
   # operator/agent quick-stop: window.py drops work/STOP -> halt now, but STILL consolidate + write
@@ -426,6 +518,7 @@ while : ; do
     render "$UNIT_PROMPT" | run_unit "$MODEL" \
       || echo "run_window: $(date -Is) unit #$UNIT exited non-zero (logged; continuing)" | tee -a "$LOG"
   fi
+  prune_transcripts   # cap the transcript dir so it can't fill the disk over a long window (#47)
   # session-limit backoff: if this unit was a limit no-op, drop it (don't count it) and sleep
   # until the reset instead of tight-relaunching against the cap.
   SLEEP="$(limit_sleep_secs "$UNIT_FILE")"
@@ -433,12 +526,28 @@ while : ; do
     echo "run_window: $(date -Is) SESSION LIMIT on unit #$UNIT -> back off ${SLEEP}s (until reset); no-op dropped, not counted" | tee -a "$LOG"
     rm -f "$UNIT_FILE"
     UNIT=$(( UNIT - 1 ))
-    sleep "$SLEEP"
+    _interruptible_sleep "$SLEEP"     # wake early on STOP / deadline (finding #24)
     continue
   fi
-  # exhaustion guard: a research-refill OR a novelty-pivot unit MUST push >= REFILL_MIN items and clear
-  # the sentinel. If it ran (not a limit no-op) yet the sentinel is STILL present, the campaign is
-  # genuinely out of tractable directions (even a novel avenue couldn't be found) -> consolidate.
+  # non-limit failure handling (findings #1/#2): a unit that crashed or returned is_error (auth
+  # expiry, bad model id, API 5xx) did NO work and returns in ~1s; tight-relaunching it spins the
+  # whole window at max rate against the cap. Count consecutive failures, back off exponentially,
+  # and abort after a hard cap instead of spinning forever.
+  if unit_is_error "$UNIT_FILE"; then
+    FAIL_STREAK=$(( FAIL_STREAK + 1 ))
+    if [ "$FAIL_STREAK" -ge "$MAX_FAIL_STREAK" ]; then
+      echo "run_window: $(date -Is) ABORT after $FAIL_STREAK consecutive unit failures (auth/API/config?) — stopping so a broken loop can't burn the window on a zero-work spin" | tee -a "$LOG"
+      REPEATED_FAILURE=1
+      break
+    fi
+    BACKOFF=$(( 15 * (1 << (FAIL_STREAK - 1)) )); [ "$BACKOFF" -gt 300 ] && BACKOFF=300
+    echo "run_window: $(date -Is) unit #$UNIT failed (streak $FAIL_STREAK/$MAX_FAIL_STREAK) -> backoff ${BACKOFF}s" | tee -a "$LOG"
+    _interruptible_sleep "$BACKOFF"
+    continue     # retry; a crashed research/pivot unit must NOT fall through to the exhaustion guard (#2)
+  fi
+  FAIL_STREAK=0
+  # exhaustion guard: only a SUCCESSFUL research/pivot unit that STILL left the sentinel means the
+  # campaign is genuinely out of tractable directions (a crashed one was retried above, #2).
   if { [ "$THIS_RESEARCH" -eq 1 ] || [ "$THIS_PIVOT" -eq 1 ]; } && [ -f "$SENTINEL" ]; then
     echo "run_window: $(date -Is) research/pivot refill left the queue empty -> consolidate (campaign exhausted)" | tee -a "$LOG"
     break
@@ -446,13 +555,22 @@ while : ; do
 done
 
 # ---- consolidate ONCE, then exit ----------------------------------------------
-MODEL="$(pick_model consolidate)"
-echo "run_window: $(date -Is) consolidate [model=$MODEL]" | tee -a "$LOG"
-render "$CONSOLIDATE_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
-  > "$LOGDIR/consolidate_$(date +%s).jsonl" 2>>"$LOG" \
-  || echo "run_window: $(date -Is) consolidate exited non-zero (logged)" | tee -a "$LOG"
-FINAL_STATE="completed"; [ "${STOP_REQUESTED:-0}" -eq 1 ] && FINAL_STATE="stopped"
-python3 -c "import json;p='$BOX/campaign.json';d=json.load(open(p));d['state']='$FINAL_STATE';json.dump(d,open(p,'w'),indent=2)"
+if [ "${REPEATED_FAILURE:-0}" -eq 1 ]; then
+  # claude itself is failing (auth/API/config) — a consolidate unit would just fail too. Skip it,
+  # mark the campaign failed, and exit so a human can investigate rather than spinning (finding #1).
+  echo "run_window: $(date -Is) skipping consolidate (repeated unit failures) — state -> failed" | tee -a "$LOG"
+  FINAL_STATE="failed"
+else
+  MODEL="$(pick_model consolidate)"
+  echo "run_window: $(date -Is) consolidate [model=$MODEL]" | tee -a "$LOG"
+  render "$CONSOLIDATE_PROMPT" | claude -p "$(cat)" --model "$MODEL" --dangerously-skip-permissions $OUTFMT \
+    > "$LOGDIR/consolidate_$(date +%s).jsonl" 2>>"$LOG" \
+    || echo "run_window: $(date -Is) consolidate exited non-zero (logged)" | tee -a "$LOG"
+  FINAL_STATE="completed"; [ "${STOP_REQUESTED:-0}" -eq 1 ] && FINAL_STATE="stopped"
+fi
+# atomic write (tmp+os.replace) so a crash here can't leave a torn campaign.json that the next
+# start hard-fails on (findings #45 + #27).
+python3 -c "import json,os,tempfile;p='$BOX/campaign.json';d=json.load(open(p));d['state']='$FINAL_STATE';fd,t=tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(p)) or '.',prefix='.campaign-',suffix='.json');f=os.fdopen(fd,'w');json.dump(d,f,indent=2);f.close();os.replace(t,p)"
 rm -f "$SENTINEL" "$CURPID_FILE" "$STOP_FLAG" "$BOX/work/driver.pid" "$BOX/work/PAUSE"
 # render the just-sealed FINAL_*.md report(s) to PDF so the dashboard panel is ready immediately
 python3 scaffold/dashboard/report_pdf.py "$BOX" >/dev/null 2>&1 || true

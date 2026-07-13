@@ -16,7 +16,7 @@ CLI:
         --total-params 30e9 --active-params 3e9 --quant q4 --kv-bytes-per-token 0
 """
 from __future__ import annotations
-import argparse, json
+import argparse, json, math
 
 # Bytes per stored weight by quant family (includes typical block/scale overhead).
 # These are PRIORS — refine from measured file sizes / params when you have them.
@@ -59,9 +59,16 @@ def active_bytes_per_token(active_params: float, quant: str,
 
 def ceiling_tok_s(hardware: dict, active_bytes: float) -> float | None:
     bw = hardware.get("bandwidth_gbps")
-    if bw in (None, "null") or active_bytes <= 0:
+    # needs-probe unless bandwidth is a real POSITIVE finite number AND we stream >0 bytes. This
+    # guards bw==0 (ZeroDivisionError in classify's eff), bw<0 (negative eff -> misclassified
+    # kernel_bound), and a non-numeric sentinel like 'unknown'/'TBD' (ValueError) — all -> None (#37).
+    try:
+        bwf = float(bw)
+    except (TypeError, ValueError):
         return None
-    return (float(bw) * 1e9) / active_bytes
+    if not math.isfinite(bwf) or bwf <= 0 or active_bytes <= 0:
+        return None
+    return (bwf * 1e9) / active_bytes
 
 
 def classify(hardware: dict, achieved_decode_tok_s: float,

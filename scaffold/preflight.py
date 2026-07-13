@@ -55,9 +55,17 @@ MANIFEST: dict[str, tuple[str, str | None]] = {
     "templates/gitignore":                     ("critical", "Secrets — NEVER commit"),
     # seeds — regenerable from doctrine if absent
     "scaffold/eval/assets/README.md":          ("seed", "Frozen eval assets"),
-    "scaffold/eval/assets/corpus.txt":         ("seed", None),
-    "scaffold/eval/assets/math.jsonl":         ("seed", '"answer"'),
-    "scaffold/eval/assets/code.jsonl":         ("seed", '"tests"'),
+    # eval-critical seeds: the eval funnel HARD-loads these (load_jsonl, not _opt), so their
+    # absence must BLOCK — not print "Safe to proceed" then FileNotFoundError the first paid eval
+    # unit on every relaunch (finding #14).
+    "scaffold/eval/assets/corpus.txt":         ("eval", None),
+    "scaffold/eval/assets/math.jsonl":         ("eval", '"answer"'),
+    "scaffold/eval/assets/code.jsonl":         ("eval", '"tests"'),
+    # v0.4 agentic seeds — load_jsonl_opt degrades to [] so warn-only, but TRACK them so preflight
+    # relocates a mis-dumped one instead of silently degrading quality to code-only (finding #50).
+    "scaffold/eval/assets/ifeval.jsonl":       ("seed", None),
+    "scaffold/eval/assets/gsm8k.jsonl":        ("seed", None),
+    "scaffold/eval/assets/toolcall.jsonl":     ("seed", None),
     "scaffold/eval/assets/pairwise_prompts.jsonl": ("seed", None),
     "scaffold/eval/assets/judge_rubric.md":    ("seed", "Pairwise judge rubric"),
     "scaffold/eval/assets/reference_pair.json":("seed", "expected_winner"),
@@ -114,7 +122,8 @@ def run(root: str, repair: bool) -> int:
         if _basename(p) == ".gitignore":
             by_name.setdefault("gitignore", []).append(p)
 
-    present, repaired, missing_critical, missing_seed, notes = [], [], [], [], []
+    present, repaired, missing_critical, missing_eval, missing_seed, notes = [], [], [], [], [], []
+    bucket = {"critical": missing_critical, "eval": missing_eval, "seed": missing_seed}
 
     for canonical, (tier, _marker) in MANIFEST.items():
         target = os.path.join(root, canonical)
@@ -126,6 +135,9 @@ def run(root: str, repair: bool) -> int:
         candidates = [c for c in by_name.get(_basename(canonical), []) if _matches(c, canonical)]
         # never treat the canonical target itself as a "move" source
         candidates = [c for c in candidates if os.path.abspath(c) != os.path.abspath(target)]
+        # deterministic pick on ambiguity: newest mtime, so a stale backup copy can't win by
+        # os.walk order and silently install an outdated file for the whole campaign (finding #38).
+        candidates.sort(key=lambda c: os.path.getmtime(c), reverse=True)
         if candidates:
             src = candidates[0]
             if repair:
@@ -134,15 +146,13 @@ def run(root: str, repair: bool) -> int:
                 repaired.append(f"{os.path.relpath(src, root)}  ->  {canonical}")
             else:
                 notes.append(f"misplaced: {os.path.relpath(src, root)} should be {canonical}")
-                (missing_critical if tier == "critical" else
-                 missing_seed if tier == "seed" else notes).append(canonical) if tier != "optional" else None
+                if tier in bucket:
+                    bucket[tier].append(canonical)
             if len(candidates) > 1:
-                notes.append(f"note: multiple matches for {_basename(canonical)}; used {os.path.relpath(src, root)}")
+                notes.append(f"note: multiple matches for {_basename(canonical)}; used newest {os.path.relpath(src, root)}")
         else:
-            if tier == "critical":
-                missing_critical.append(canonical)
-            elif tier == "seed":
-                missing_seed.append(canonical)
+            if tier in bucket:
+                bucket[tier].append(canonical)
             # optional missing -> silent
 
     # ---- report ----
@@ -159,15 +169,21 @@ def run(root: str, repair: bool) -> int:
     if notes:
         for n in notes:
             print(f"  ! {n}")
+    if missing_eval:
+        print(f"  EVAL SEEDS MISSING ({len(missing_eval)}) — the eval funnel hard-loads these; the")
+        print(f"  first eval unit would FileNotFoundError. Supply/regenerate before running:")
+        for m in missing_eval:
+            print(f"            {m}")
     if missing_critical:
         print(f"  CRITICAL MISSING ({len(missing_critical)}) — supply these and re-run:")
         for m in missing_critical:
             print(f"            {m}")
+    if missing_critical or missing_eval:
         print("  -> structure NOT ready.")
         return 1
 
     if not repair and (missing_seed or notes):
-        # check-only mode surfaced issues but no criticals
+        # check-only mode surfaced issues but no blockers
         print("  -> apparatus files OK (check-only; seeds/notes above are non-blocking).")
         return 0
 

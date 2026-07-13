@@ -19,7 +19,7 @@ is done by the orchestrator and passed in — this module is the metric/bookkeep
 Stdlib only.
 """
 from __future__ import annotations
-import json, math, os, re, subprocess, sys, tempfile
+import json, math, os, re, secrets, signal, subprocess, sys, tempfile
 from collections import Counter
 
 # ============================ TIER 0: degeneracy =============================
@@ -140,19 +140,72 @@ def grade_code(outputs: list[str], items: list[dict], timeout: int = 10) -> floa
     ok = 0
     for out, it in zip(outputs, items):
         code = _extract_code(out or "")
-        prog = code + "\n\n" + it["tests"] + "\n"
+        # Grade on a per-item RANDOM success sentinel printed only AFTER every appended
+        # assert has passed — never on the process exit code. Model code that does
+        # `sys.exit(0)` / `os._exit(0)` / `if __name__=='__main__': ...` would otherwise
+        # exit clean before the tests run and be scored PASS (finding #10). The token is
+        # generated at grade time, so already-generated model output cannot pre-print it.
+        token = "__CRUCIBLE_OK_" + secrets.token_hex(8) + "__"
+        prog = code + "\n\n" + it["tests"] + "\n" + f'\nprint({token!r})\n'
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as tf:
             tf.write(prog); path = tf.name
+        outpath = path + ".out"
+        proc = None
         try:
-            r = subprocess.run([sys.executable, path], capture_output=True,
-                               text=True, timeout=timeout)
-            if r.returncode == 0:
+            # stdin=DEVNULL: input()-reading model code fails fast instead of blocking to
+            #   timeout (#61). stdout->file, not a parent PIPE: bounds grader RAM against a
+            #   `while True: print(...)` flood (#20). start_new_session: own process group
+            #   so we can kill Popen'd grandchildren on timeout (#21).
+            with open(outpath, "wb") as ofh:
+                proc = subprocess.Popen(
+                    [sys.executable, path],
+                    stdin=subprocess.DEVNULL, stdout=ofh, stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    _kill_group(proc)
+                    proc.wait()
+            if _sentinel_in_file(outpath, token):
                 ok += 1
-        except subprocess.TimeoutExpired:
+        except OSError:
             pass
         finally:
-            os.unlink(path)
+            if proc is not None:
+                _kill_group(proc)                      # reap any surviving grandchildren
+            for pth in (path, outpath):
+                try: os.unlink(pth)
+                except OSError: pass
     return ok / len(items)
+
+
+def _kill_group(proc) -> None:
+    """SIGKILL the child's whole process group (grandchildren included); fall back to a
+    direct kill. Idempotent and never raises."""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try: proc.kill()
+        except OSError: pass
+
+
+def _sentinel_in_file(path: str, token: str, chunk: int = 1 << 20) -> bool:
+    """Scan the output file for the sentinel in bounded chunks so a multi-GB flood can't
+    OOM the grader. Carries a token-length overlap so a sentinel split across a chunk
+    boundary is still found."""
+    tok = token.encode(); overlap = b""
+    try:
+        with open(path, "rb") as f:
+            while True:
+                blk = f.read(chunk)
+                if not blk:
+                    return False
+                if tok in (overlap + blk):
+                    return True
+                overlap = blk[-len(tok):]
+    except OSError:
+        return False
 
 def _extract_code(text: str) -> str:
     t = _strip_think(text or "")                                    # ignore reasoning scratch

@@ -26,11 +26,24 @@ What it does:
     5. Appends a record to boxes/<nick>/verify_audit.jsonl and prints PASS/DIVERGENCE.
 """
 from __future__ import annotations
-import argparse, json, os, re, statistics, subprocess, time
+import argparse, json, os, re, shlex, statistics, subprocess, time
 
-def sh(cmd: str, timeout: int = 600) -> tuple[int, str, str]:
-    p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-    return p.returncode, p.stdout, p.stderr
+def sh(ssh_prefix: str, remote_cmd: str, timeout: int = 600) -> tuple[int, str, str]:
+    # argv form, NOT shell=True: the LOCAL shell never parses remote_cmd, which closes
+    # the RCE where a malicious blessed.json (written by the sudo agent) smuggles $(...)
+    # or backticks onto the more-trusted auditor host. ssh still hands remote_cmd to the
+    # REMOTE shell as one argument, which is the intended remote execution.
+    # errors="replace" turns genuine non-UTF8 engine garbage into U+FFFD (which the smoke
+    # check scans for) instead of raising a UnicodeDecodeError that crashes the auditor.
+    argv = shlex.split(ssh_prefix) + [remote_cmd]
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True,
+                           timeout=timeout, errors="replace")
+        return p.returncode, p.stdout, p.stderr
+    except subprocess.TimeoutExpired as e:
+        return 124, (e.stdout or ""), f"TIMEOUT after {timeout}s"
+    except OSError as e:
+        return 125, "", f"SPAWN_ERROR: {e}"
 
 def load_jsonl(path: str) -> list[dict]:
     if not os.path.exists(path):
@@ -57,15 +70,24 @@ def parse_tok_s(text: str) -> float | None:
     'eval time = ... ( N tokens per second)'. Adjust the regexes if your engine differs;
     keeping this auditor engine-aware but simple is the point.
     """
-    pats = [
-        r"([0-9]+\.[0-9]+)\s*tokens? per second",
-        r"eval time.*?([0-9]+\.[0-9]+)\s*t/?s",
-        r"decode[:\s]+([0-9]+\.[0-9]+)\s*tok",
-    ]
-    cands = []
-    for p in pats:
-        cands += [float(m) for m in re.findall(p, text, re.IGNORECASE)]
-    return max(cands) if cands else None
+    # llama.cpp prints TWO 'tokens per second' lines: 'prompt eval time' (prefill, high)
+    # and 'eval time' (decode, low). The old max() grabbed prefill as the "decode" number,
+    # so the shortfall went negative and the DIVERGENCE check could essentially never
+    # fire. Anchor on the decode line, exclude the prompt-eval line, and return None
+    # (-> NO_MEASURE, a loud non-PASS) rather than falling back to the larger value.
+    num = r"([0-9]+\.[0-9]+)"
+    decode: list[float] = []
+    for ln in text.splitlines():
+        low = ln.lower()
+        if "prompt eval" in low:
+            continue                       # prefill — never usable as decode
+        if "eval time" in low or "decode" in low:
+            m = (re.search(num + r"\s*tokens? per second", ln, re.IGNORECASE)
+                 or re.search(num + r"\s*t/?s", ln, re.IGNORECASE)
+                 or re.search(r"decode[:\s]+" + num, ln, re.IGNORECASE))
+            if m:
+                decode.append(float(m.group(1)))
+    return decode[-1] if decode else None
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -93,9 +115,12 @@ def main() -> int:
              "claimed_decode_tok_s": claimed}
 
     # 1. smoke test (correctness floor) ----------------------------------------
-    rc, out, err = sh(f'{a.ssh} {json.dumps(smoke_cmd)}', timeout=300)
+    rc, out, err = sh(a.ssh, smoke_cmd, timeout=300)
     blob = (out + err)
-    bad = (rc != 0) or ("illegal instruction" in blob.lower()) or ("\ufffd" in out)
+    # empty output must NOT pass: an engine that exits 0 with no token is a silent
+    # smoke failure. Require positive evidence of a decoded token.
+    bad = (rc != 0) or ("illegal instruction" in blob.lower()) \
+          or ("\ufffd" in out) or (not out.strip())
     audit["smoke_ok"] = not bad
     if bad:
         audit["verdict"] = "SMOKE_FAIL"
@@ -107,7 +132,7 @@ def main() -> int:
     # 2. independent tok/s measurement -----------------------------------------
     samples = []
     for i in range(a.warmup + a.runs):
-        rc, out, err = sh(f'{a.ssh} {json.dumps(measure_cmd)}', timeout=1200)
+        rc, out, err = sh(a.ssh, measure_cmd, timeout=1200)
         ts = parse_tok_s(out + err)
         if i >= a.warmup and ts is not None:
             samples.append(ts)
@@ -127,22 +152,35 @@ def main() -> int:
         claim = lc["decode_tok_s"]
     audit["ledger_claim"] = claim
 
-    if claim:
-        shortfall = (claim - measured) / claim
-        audit["shortfall_frac"] = shortfall
-        if shortfall > a.tolerance:
-            audit["verdict"] = "DIVERGENCE"
-            _write_audit(a.box, audit)
-            print(f"[verify] ⚠ DIVERGENCE for {config_id}: ledger/blessed claims "
-                  f"{claim:.1f} tok/s, independently measured {measured:.1f} "
-                  f"({shortfall:.0%} short, tolerance {a.tolerance:.0%}). "
-                  f"Investigate the agent's instrumentation.")
-            return 1
+    # A missing/zero claim is UNVERIFIABLE, not a pass. The old `if claim:` fell straight
+    # through to PASS when neither blessed.json nor the ledger supplied a truthy tok/s —
+    # a zero-effort bypass, since the sudo agent writes both files. Fail loud instead.
+    if not claim:
+        audit["verdict"] = "NO_CLAIM"
+        _write_audit(a.box, audit)
+        print(f"[verify] ⚠ NO_CLAIM for {config_id}: no truthy decode tok/s in blessed.json "
+              f"or ledger to compare against. Unverifiable — not a pass.")
+        return 2
+
+    shortfall = (claim - measured) / claim
+    audit["shortfall_frac"] = shortfall
+    if shortfall > a.tolerance:
+        audit["verdict"] = "DIVERGENCE"
+        _write_audit(a.box, audit)
+        print(f"[verify] ⚠ DIVERGENCE for {config_id}: ledger/blessed claims "
+              f"{claim:.1f} tok/s, independently measured {measured:.1f} "
+              f"({shortfall:.0%} short, tolerance {a.tolerance:.0%}). "
+              f"Investigate the agent's instrumentation.")
+        return 1
 
     audit["verdict"] = "PASS"
+    # Honesty flag (finding #16): this auditor re-checks smoke + tok/s only. The doctrine
+    # /05 correctness (KLD) re-check is NOT yet reproduced here — do not read PASS as a
+    # numerical-equivalence re-verification. Full re-check is a tracked 0.5 follow-up.
+    audit["correctness_rechecked"] = False
     _write_audit(a.box, audit)
     print(f"[verify] ✓ PASS for {config_id}: claim={claim} measured={measured:.1f} tok/s, "
-          f"smoke clean. Blessed config independently confirmed.")
+          f"smoke clean (tok/s + smoke only; correctness re-check not yet implemented).")
     return 0
 
 def _write_audit(box: str, audit: dict) -> None:

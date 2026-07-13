@@ -30,8 +30,15 @@ case "$SUB" in
   start)
     JOBSPEC="${1:?remote_run start needs a remote command}"
     JOB="job_$(date +%s)"
+    # base64 the job command so ANY quoting inside it (single quotes, $( ), awk/sed scripts) survives
+    # the trip through the remote login shell AND the flock -c '...' wrapper (finding #13). The old
+    # code pasted $JOBSPEC verbatim between the single quotes of `flock -c '...'`, so one single quote
+    # in the command closed the -c string early: the job died with a syntax error, never wrote DONE,
+    # was misreported as "box busy", and a subsequent `wait` hung forever. The b64 blob is
+    # [A-Za-z0-9+/=] only, so it embeds safely; the remote decodes it and runs it via bash.
+    JOBSPEC_B64="$(printf '%s' "$JOBSPEC" | base64 | tr -d '\n')"
     # flock -n = single-tenant; if the box lock is held, fail fast rather than contend.
-    if $SSH "mkdir -p $RDIR/$JOB && flock -n '$LOCK' -c '{ $JOBSPEC ; echo DONE rc=\$? > $RDIR/$JOB/.done && mv -f $RDIR/$JOB/.done $RDIR/$JOB/DONE ; } > $RDIR/$JOB/out.log 2>&1 & echo \$! > $RDIR/$JOB/pid'"; then
+    if $SSH "mkdir -p $RDIR/$JOB && flock -n '$LOCK' -c '{ echo $JOBSPEC_B64 | base64 -d | bash ; echo DONE rc=\$? > $RDIR/$JOB/.done && mv -f $RDIR/$JOB/.done $RDIR/$JOB/DONE ; } > $RDIR/$JOB/out.log 2>&1 & echo \$! > $RDIR/$JOB/pid'"; then
       echo "$JOB"
     else
       echo "remote_run: box busy (lock held) or launch failed" >&2; exit 3
@@ -45,16 +52,33 @@ case "$SUB" in
   poll|wait)
     JOB="${1:-$($SSH "ls -1t $RDIR 2>/dev/null | head -1")}"
     INT="${2:-15}"
+    MAXWAIT="${REMOTE_RUN_MAXWAIT:-21600}"     # 6h ceiling so a wedged job can't loop forever (#31)
     [ -n "$JOB" ] || { echo "remote_run: no jobs found" >&2; exit 2; }
+    START="$(date +%s)"
     while : ; do
-      DONE="$($SSH "cat $RDIR/$JOB/DONE 2>/dev/null")"
-      if [ -n "$DONE" ]; then
-        echo "$DONE"                       # complete sentinel only, e.g. "DONE rc=0"
-        RC="${DONE##*rc=}"
-        [ "$SUB" = "wait" ] && exit "${RC:-0}"
-        exit 0
+      # ONE round-trip: report the DONE sentinel if written, else whether the job pid is still ALIVE
+      # or DEAD. Distinguishes a finished job, a live job, and a job that died without writing DONE
+      # (crash/reboot/OOM) — the old loop treated all three (and an unreachable box) as "running" (#31).
+      STATUS="$($SSH "if [ -s $RDIR/$JOB/DONE ]; then echo DONEFILE:\$(cat $RDIR/$JOB/DONE); elif kill -0 \$(cat $RDIR/$JOB/pid 2>/dev/null) 2>/dev/null; then echo ALIVE; else echo DEAD; fi")"
+      SSH_RC=$?
+      if [ "$SSH_RC" -ne 0 ]; then
+        # transport failure (asleep box / network), NOT 'still running'.
+        [ "$SUB" = "poll" ] && { echo "unreachable ($JOB): ssh rc=$SSH_RC" >&2; exit 3; }
+        echo "remote_run: box unreachable (ssh rc=$SSH_RC), retrying under the ${MAXWAIT}s ceiling" >&2
+      else
+        case "$STATUS" in
+          DONEFILE:*)
+            DONE="${STATUS#DONEFILE:}"; echo "$DONE"
+            RC="${DONE##*rc=}"; [ "$SUB" = "wait" ] && exit "${RC:-0}"; exit 0 ;;
+          DEAD)
+            echo "remote_run: job $JOB died without writing DONE (crash/reboot/OOM)" >&2; exit 4 ;;
+          ALIVE)
+            [ "$SUB" = "poll" ] && { echo "running ($JOB)"; exit 2; } ;;
+        esac
       fi
-      [ "$SUB" = "poll" ] && { echo "running ($JOB)"; exit 2; }
+      if [ "$(( $(date +%s) - START ))" -ge "$MAXWAIT" ]; then
+        echo "remote_run: wait exceeded ${MAXWAIT}s for $JOB — giving up" >&2; exit 5
+      fi
       sleep "$INT"
     done
     ;;

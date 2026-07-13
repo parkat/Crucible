@@ -46,10 +46,36 @@ def max_abs_logit_diff(cand_rows: Sequence[Sequence[float]],
 
 
 def _softmax(row: Sequence[float]) -> list[float]:
+    if not row:                       # an empty/truncated row must not crash the gate
+        raise ValueError("empty logit row")
     m = max(row)
     ex = [math.exp(x - m) for x in row]
     s = sum(ex)
     return [e / s for e in ex]
+
+
+def _logit_shape_error(cand_rows: Sequence[Sequence[float]],
+                       ref_rows: Sequence[Sequence[float]]) -> str | None:
+    """Reject shape/finiteness problems BEFORE the zip()-based signals run.
+
+    Without this, two failure modes slip through as a false PASS:
+      - a truncated candidate (fewer/shorter rows) is scored only over its prefix,
+        because max_abs_logit_diff/kld_rows zip to the shorter sequence;
+      - a NaN logit defeats every '>' tolerance guard (``NaN > tol`` is False) and
+        even keeps max_abs_logit_diff at 0.0 (``d > worst`` is False for NaN).
+    """
+    if len(cand_rows) != len(ref_rows):
+        return (f"logit row count mismatch: candidate {len(cand_rows)} "
+                f"vs reference {len(ref_rows)}")
+    for i, (cr, rr) in enumerate(zip(cand_rows, ref_rows)):
+        if not cr or not rr:
+            return f"empty logit row at position {i}"
+        if len(cr) != len(rr):
+            return f"logit vocab mismatch at row {i}: {len(cr)} vs {len(rr)}"
+        for v in cr:
+            if not math.isfinite(v):
+                return f"non-finite candidate logit (NaN/inf) at row {i} -> broken kernel"
+    return None
 
 
 def kld_rows(p_rows: Sequence[Sequence[float]],
@@ -99,14 +125,24 @@ def equivalence_gate(candidate_tokens: Sequence[int] | None = None,
             ok = False; reasons.append(f"token_match {tm:.3f} < {min_token_match}")
 
     if candidate_logits is not None and reference_logits is not None:
-        mld = max_abs_logit_diff(candidate_logits, reference_logits)
-        kl = kld_rows(reference_logits, candidate_logits)
-        signals["max_logit_diff"] = mld
-        signals["kld"] = kl
-        if mld > max_logit_diff:
-            ok = False; reasons.append(f"max_logit_diff {mld:.3f} > {max_logit_diff}")
-        if kl > max_kld:
-            ok = False; reasons.append(f"kld {kl:.4f} > {max_kld}")
+        shape_err = _logit_shape_error(candidate_logits, reference_logits)
+        if shape_err is not None:
+            ok = False; reasons.append(shape_err)
+            signals["logit_shape_ok"] = 0.0
+        else:
+            mld = max_abs_logit_diff(candidate_logits, reference_logits)
+            kl = kld_rows(reference_logits, candidate_logits)
+            signals["max_logit_diff"] = mld
+            signals["kld"] = kl
+            if not (math.isfinite(mld) and math.isfinite(kl)):
+                # belt-and-suspenders: a NaN that survived the per-row check must fail hard,
+                # never read as "within tolerance".
+                ok = False; reasons.append("non-finite logit signal (NaN/inf) -> automatic fail")
+            else:
+                if mld > max_logit_diff:
+                    ok = False; reasons.append(f"max_logit_diff {mld:.3f} > {max_logit_diff}")
+                if kl > max_kld:
+                    ok = False; reasons.append(f"kld {kl:.4f} > {max_kld}")
 
     if not signals:
         return {"pass": False, "signals": {}, "reason": "no comparison data provided"}
